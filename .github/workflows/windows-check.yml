@@ -65,3 +65,10 @@ jobs:
           $p = Start-Process "$dir/PayPulse.exe" -ArgumentList '--smoke-test' -PassThru
           if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Published application timed out' }
           if ($p.ExitCode -ne 0) { throw "Published application exited with $($p.ExitCode)" }
+      - name: Save Windows UI renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-ui-check
+          path: ${{ runner.temp }}/PayPulse-*.png
+          if-no-files-found: warn

@@ -15,6 +15,7 @@
 #include <sstream>
 #include <cwchar>
 #include <cstring>
+#include <memory>
 #include <vector>
 #include "SalaryEngine.hpp"
 
@@ -60,10 +61,17 @@ std::wstring countdown() {
     int t = static_cast<int>(std::max(0.0,std::difftime(earnings.next,currentTime)));
     wchar_t text[24]; swprintf(text,24,L"%02d:%02d:%02d",t/3600,(t/60)%60,t%60); return text;
 }
+std::unique_ptr<Font> uiFont(float size,bool bold=false) {
+    auto style=bold?FontStyleBold:FontStyleRegular;
+    auto font=std::make_unique<Font>(L"Microsoft YaHei UI",size,style,UnitPixel);
+    if(font->GetLastStatus()!=Ok) font=std::make_unique<Font>(L"Segoe UI",size,style,UnitPixel);
+    if(font->GetLastStatus()!=Ok) font=std::make_unique<Font>(FontFamily::GenericSansSerif(),size,style,UnitPixel);
+    return font;
+}
 void text(Graphics& g, const std::wstring& value, float x, float y, float size, Color color, bool bold=false, float width=500) {
-    Font font(L"Microsoft YaHei UI",size,bold ? FontStyleBold : FontStyleRegular,UnitPixel);
+    auto font=uiFont(size,bold);
     SolidBrush brush(color); StringFormat format; format.SetFormatFlags(StringFormatFlagsNoWrap); format.SetTrimming(StringTrimmingEllipsisCharacter);
-    g.DrawString(value.c_str(),-1,&font,RectF(x,y,width,size*1.8f),&format,&brush);
+    g.DrawString(value.c_str(),-1,font.get(),RectF(x,y,width,size*1.8f),&format,&brush);
 }
 void rounded(Graphics& g, float x,float y,float w,float h,float r,Color color) {
     GraphicsPath p;
@@ -239,8 +247,8 @@ void drawButton(const DRAWITEMSTRUCT& d) {
     bool primary=d.CtlID==SAVE||d.CtlID==OPEN_SETTINGS;
     rounded(g,0,0,w,h,8,primary?green:Color(255,255,255,255));
     if(d.itemState&ODS_SELECTED) { SolidBrush overlay(Color(30,0,0,0)); g.FillRectangle(&overlay,0.f,0.f,w,h); }
-    Font font(L"Microsoft YaHei UI",12,FontStyleRegular,UnitPixel); SolidBrush brush(primary?Color(255,255,255,255):ink); StringFormat f; f.SetAlignment(StringAlignmentCenter); f.SetLineAlignment(StringAlignmentCenter);
-    g.DrawString(label,-1,&font,RectF(0,0,w,h),&f,&brush);
+    auto font=uiFont(12); SolidBrush brush(primary?Color(255,255,255,255):ink); StringFormat f; f.SetAlignment(StringAlignmentCenter); f.SetLineAlignment(StringAlignmentCenter);
+    g.DrawString(label,-1,font.get(),RectF(0,0,w,h),&f,&brush);
     if(d.itemState&ODS_FOCUS) { Pen focus(Color(180,160,175,160)); focus.SetDashStyle(DashStyleDot); g.DrawRectangle(&focus,3.f,3.f,w-6,h-6); }
 }
 void trayMenu() {
@@ -248,6 +256,19 @@ void trayMenu() {
     AppendMenuW(menu,MF_STRING,3,floatingWindow&&IsWindowVisible(floatingWindow)?L"收起悬浮窗":L"桌面悬浮窗"); AppendMenuW(menu,MF_STRING,4,settings.hidden?L"显示金额":L"隐藏金额"); AppendMenuW(menu,MF_SEPARATOR,0,nullptr); AppendMenuW(menu,MF_STRING,5,L"退出薪跳");
     POINT p; GetCursorPos(&p); SetForegroundWindow(mainWindow); auto result=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,mainWindow,nullptr); DestroyMenu(menu); PostMessageW(mainWindow,WM_NULL,0,0);
     if(result==1) showMain(); else if(result==2) showSettings(); else if(result==3) toggleFloating(); else if(result==4) {settings.hidden=!settings.hidden;storeSettings();tick();} else if(result==5) quit();
+}
+void printClient(HWND w,HDC dc) {
+    Graphics g(dc);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);
+    if(w==mainWindow)drawMain(g);else if(w==settingsWindow)paintSettings(g);else drawFloating(g);
+}
+void captureWindow(HWND w,const wchar_t* name) {
+    RECT r;GetClientRect(w,&r);HDC dc=GetDC(w),memory=CreateCompatibleDC(dc);HBITMAP image=CreateCompatibleBitmap(dc,r.right,r.bottom);
+    HGDIOBJ old=SelectObject(memory,image);
+    SendMessageW(w,WM_PRINT,reinterpret_cast<WPARAM>(memory),PRF_CLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
+    UINT count=0,bytes=0;GetImageEncodersSize(&count,&bytes);std::vector<BYTE> info(bytes);auto codecs=reinterpret_cast<ImageCodecInfo*>(info.data());GetImageEncoders(count,bytes,codecs);
+    wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+name;
+    {Bitmap bitmap(image,nullptr);for(UINT i=0;i<count;i++)if(wcscmp(codecs[i].MimeType,L"image/png")==0){bitmap.Save(path.c_str(),&codecs[i].Clsid,nullptr);break;}}
+    SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(w,dc);
 }
 LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     if(msg==taskbarCreated) { trayUpdate(true); return 0; }
@@ -260,7 +281,11 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             control(w,L"BUTTON",L"退出",EXIT_APP,355,578,41,25,BS_OWNERDRAW);
             SetTimer(w,1,1000,nullptr); return 0;
         case WM_TIMER:
-            if(wp==2) { smokeLog("smoke timer fired");quit(); return 0; }
+            if(wp==2) {
+                smokeLog("smoke timer fired");
+                captureWindow(mainWindow,L"PayPulse-main.png");captureWindow(settingsWindow,L"PayPulse-settings.png");captureWindow(floatingWindow,L"PayPulse-floating.png");
+                quit();return 0;
+            }
             tick(); return 0;
         case SHOW_APP: showMain(); return 0;
         case TRAY_MESSAGE:
@@ -274,6 +299,7 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             } return 0;
         case WM_DRAWITEM: drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)); return TRUE;
         case WM_ERASEBKGND: return 1;
+        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
         case WM_PAINT: { PAINTSTRUCT ps; HDC dc=BeginPaint(w,&ps); RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);drawMain(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0; }
         case WM_CLOSE: ShowWindow(w,SW_HIDE); return 0;
         case WM_DESTROY:
@@ -308,6 +334,7 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_DRAWITEM: drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_CTLCOLORBTN: case WM_CTLCOLORSTATIC: {HDC dc=reinterpret_cast<HDC>(wp);SetBkColor(dc,RGB(248,248,241));SetTextColor(dc,RGB(31,51,43));static HBRUSH brush=CreateSolidBrush(RGB(248,248,241));return reinterpret_cast<LRESULT>(brush);}
         case WM_ERASEBKGND:return 1;
+        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
         case WM_PAINT: {PAINTSTRUCT ps;HDC dc=BeginPaint(w,&ps);RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);paintSettings(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0;}
         case WM_CLOSE:DestroyWindow(w);return 0;
         case WM_DESTROY:settingsWindow=nullptr;settingsControls.clear();return 0;
@@ -321,7 +348,8 @@ LRESULT CALLBACK floatingProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_COMMAND:if(LOWORD(wp)==FLOAT_CLOSE) ShowWindow(w,SW_HIDE);return 0;
         case WM_DRAWITEM:drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_ERASEBKGND:return 1;
-        case WM_PAINT:{PAINTSTRUCT ps;HDC dc=BeginPaint(w,&ps);Graphics g(dc);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);drawFloating(g);EndPaint(w,&ps);return 0;}
+        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
+        case WM_PAINT:{PAINTSTRUCT ps;HDC dc=BeginPaint(w,&ps);RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);drawFloating(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0;}
         case WM_CLOSE:ShowWindow(w,SW_HIDE);return 0;
     }
     return DefWindowProcW(w,msg,wp,lp);
