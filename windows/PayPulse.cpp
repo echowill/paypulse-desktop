@@ -172,8 +172,11 @@ void layoutSettings() {
     for(auto& c:settingsControls) {
         int id=GetDlgCtrlID(c.window);bool footer=id==SAVE||id==CANCEL;int y=footer?height-53:c.y-settingsScroll;
         MoveWindow(c.window,px(settingsWindow,c.x),px(settingsWindow,y),px(settingsWindow,c.w),px(settingsWindow,c.h),TRUE);
-        ShowWindow(c.window,footer||(y>=0&&y+c.h<=viewport)?SW_SHOWNA:SW_HIDE);
         if(fontsChanged||!c.fontInstalled) {SendMessageW(c.window,WM_SETFONT,reinterpret_cast<WPARAM>(c.large?largeFont:controlFont),TRUE);c.fontInstalled=true;}
+        RECT nativeRect;GetWindowRect(c.window,&nativeRect);double visibleHeight=(nativeRect.bottom-nativeRect.top)/s;
+        // A combo box's requested height includes its popup list. Its collapsed
+        // field must remain visible while that popup is closed.
+        ShowWindow(c.window,footer||(y>=0&&y+visibleHeight<=viewport+1)?SW_SHOWNA:SW_HIDE);
     }
 }
 HWND control(HWND parent,const wchar_t* cls,const wchar_t* caption,int id,int x,int y,int w,int h,DWORD extra=0,bool large=false) {
@@ -316,6 +319,7 @@ bool captureWindow(HWND w,const wchar_t* name) {
         if(w==settingsWindow) {
             COLORREF field=GetPixel(memory,px(w,490),px(w,130));
             persisted=persisted&&field!=CLR_INVALID&&GetRValue(field)>=250&&GetGValue(field)>=250&&GetBValue(field)>=250;
+            persisted=persisted&&IsWindowVisible(GetDlgItem(w,SET_BASIS))&&IsWindowVisible(GetDlgItem(w,SET_START))&&IsWindowVisible(GetDlgItem(w,SET_END));
         }
         smokeLog(persisted?"native save/settings button survives parent repaint":"ERROR: native button disappeared after parent repaint");
     }
