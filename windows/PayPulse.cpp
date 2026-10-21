@@ -153,7 +153,7 @@ bool setLogin(bool enabled) {
     } else { result=RegDeleteValueW(key,L"PayPulse"); if(result==ERROR_FILE_NOT_FOUND) result=ERROR_SUCCESS; }
     RegCloseKey(key); return result==ERROR_SUCCESS;
 }
-struct Control { HWND window; int x,y,w,h; bool large=false; };
+struct Control { HWND window; int x,y,w,h; bool large=false; bool fontInstalled=false; };
 std::vector<Control> settingsControls;
 void layoutSettings() {
     if(!settingsWindow) return;
@@ -173,7 +173,7 @@ void layoutSettings() {
         int id=GetDlgCtrlID(c.window);bool footer=id==SAVE||id==CANCEL;int y=footer?height-53:c.y-settingsScroll;
         MoveWindow(c.window,px(settingsWindow,c.x),px(settingsWindow,y),px(settingsWindow,c.w),px(settingsWindow,c.h),TRUE);
         ShowWindow(c.window,footer||(y>=0&&y+c.h<=viewport)?SW_SHOWNA:SW_HIDE);
-        if(fontsChanged)SendMessageW(c.window,WM_SETFONT,reinterpret_cast<WPARAM>(c.large?largeFont:controlFont),TRUE);
+        if(fontsChanged||!c.fontInstalled) {SendMessageW(c.window,WM_SETFONT,reinterpret_cast<WPARAM>(c.large?largeFont:controlFont),TRUE);c.fontInstalled=true;}
     }
 }
 HWND control(HWND parent,const wchar_t* cls,const wchar_t* caption,int id,int x,int y,int w,int h,DWORD extra=0,bool large=false) {
@@ -250,7 +250,7 @@ void paintSettings(Graphics& g) {
     g.Restore(state);
 }
 void trayUpdate(bool add=false) {
-    std::wstring tip=L"薪跳 · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
+    std::wstring tip=L"薪跳 v1.0.2 · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
     wcsncpy(tray.szTip,tip.c_str(),127); tray.szTip[127]=0;
     tray.uFlags=add?(NIF_ICON|NIF_MESSAGE|NIF_TIP):NIF_TIP;
     Shell_NotifyIconW(add?NIM_ADD:NIM_MODIFY,&tray);
@@ -430,7 +430,7 @@ HWND makeWindow(const wchar_t* cls,const wchar_t* title,int width,int height,DWO
     return CreateWindowExW(ex,cls,title,style|WS_CLIPCHILDREN,x,y,w,h,nullptr,nullptr,instance,nullptr);
 }
 void showSettings() {
-    if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VSCROLL,WS_EX_CONTROLPARENT);
+    if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班 · v1.0.2",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VSCROLL,WS_EX_CONTROLPARENT);
     ShowWindow(settingsWindow,SW_SHOW);SetForegroundWindow(settingsWindow);SetFocus(GetDlgItem(settingsWindow,SET_SALARY));SendDlgItemMessageW(settingsWindow,SET_SALARY,EM_SETSEL,0,-1);
 }
 void toggleFloating() {
@@ -448,7 +448,12 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     if(smokeMode&&wcsstr(command,L"--scale125"))testScale=1.25;
     smokeLog("starting");
     HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\PayPulse.Desktop.Instance");
-    if(GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"PayPulse.Main",nullptr);if(existing)PostMessageW(existing,SHOW_APP,0,0);if(mutex)CloseHandle(mutex);return 0;}
+    if(GetLastError()==ERROR_ALREADY_EXISTS) {
+        HWND existing=FindWindowW(L"PayPulse.Main",nullptr);wchar_t title[256]{};if(existing)GetWindowTextW(existing,title,256);
+        if(existing&&!wcsstr(title,L"v1.0.2"))MessageBoxW(nullptr,L"另一个版本的薪跳仍在后台运行。请先在托盘右键选择「退出」，再打开 v1.0.2。",L"薪跳 · 更新版本",MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
+        else if(existing)PostMessageW(existing,SHOW_APP,0,0);
+        if(mutex)CloseHandle(mutex);return 0;
+    }
     // System DPI awareness keeps native controls and custom drawing at one consistent scale.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_DATE_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
@@ -461,7 +466,7 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     const bool smokeTest=wcsstr(command,L"--smoke-test")!=nullptr;
     if(smokeTest) {settings=Settings();settings.salary=18000;earnings=snapshot(currentTime,settings);}
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
-    mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse",420,608,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
+    mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse · v1.0.2",420,608,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
     smokeLog("main window created");
     if(!mainWindow){GdiplusShutdown(token);return 1;}
     tray.cbSize=sizeof(tray);tray.hWnd=mainWindow;tray.uID=1;tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;tray.uCallbackMessage=TRAY_MESSAGE;tray.hIcon=appIcon;trayUpdate(true);
