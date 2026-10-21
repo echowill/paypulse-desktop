@@ -12,6 +12,7 @@ permissions:
   contents: read
 jobs:
   macos:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
