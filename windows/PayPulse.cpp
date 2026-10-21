@@ -370,6 +370,7 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             control(w,L"BUTTON",L"退出",EXIT_APP,355,556,41,25,BS_OWNERDRAW);
             SetTimer(w,1,1000,nullptr); return 0;
         case WM_TIMER:
+            if(wp!=1&&!smokeMode)return 0;
             if(wp==6) {
                 KillTimer(w,6);
                 INPUT inputs[]={mouseInput(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK),mouseInput(MOUSEEVENTF_LEFTUP)};
