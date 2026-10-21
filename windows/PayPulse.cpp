@@ -264,7 +264,19 @@ void printClient(HWND w,HDC dc) {
 void captureWindow(HWND w,const wchar_t* name) {
     RECT r;GetClientRect(w,&r);HDC dc=GetDC(w),memory=CreateCompatibleDC(dc);HBITMAP image=CreateCompatibleBitmap(dc,r.right,r.bottom);
     HGDIOBJ old=SelectObject(memory,image);
-    SendMessageW(w,WM_PRINT,reinterpret_cast<WPARAM>(memory),PRF_CLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
+    // Compose the client and each native child in client coordinates. DefWindowProc
+    // prints children in window coordinates, while GDI+ ignores that viewport origin.
+    printClient(w,memory);
+    for(HWND child=GetWindow(w,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
+        if(!IsWindowVisible(child))continue;
+        RECT childRect;GetWindowRect(child,&childRect);MapWindowPoints(HWND_DESKTOP,w,reinterpret_cast<POINT*>(&childRect),2);
+        int width=childRect.right-childRect.left,height=childRect.bottom-childRect.top;
+        if(width<=0||height<=0)continue;
+        HDC childDC=CreateCompatibleDC(dc);HBITMAP childImage=CreateCompatibleBitmap(dc,width,height);HGDIOBJ childOld=SelectObject(childDC,childImage);
+        PrintWindow(child,childDC,0);
+        BitBlt(memory,childRect.left,childRect.top,width,height,childDC,0,0,SRCCOPY);
+        SelectObject(childDC,childOld);DeleteObject(childImage);DeleteDC(childDC);
+    }
     UINT count=0,bytes=0;GetImageEncodersSize(&count,&bytes);std::vector<BYTE> info(bytes);auto codecs=reinterpret_cast<ImageCodecInfo*>(info.data());GetImageEncoders(count,bytes,codecs);
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+name;
     {Bitmap bitmap(image,nullptr);for(UINT i=0;i<count;i++)if(wcscmp(codecs[i].MimeType,L"image/png")==0){bitmap.Save(path.c_str(),&codecs[i].Clsid,nullptr);break;}}
