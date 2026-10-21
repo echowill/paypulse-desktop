@@ -273,7 +273,7 @@ void captureWindow(HWND w,const wchar_t* name) {
         int width=childRect.right-childRect.left,height=childRect.bottom-childRect.top;
         if(width<=0||height<=0)continue;
         HDC childDC=CreateCompatibleDC(dc);HBITMAP childImage=CreateCompatibleBitmap(dc,width,height);HGDIOBJ childOld=SelectObject(childDC,childImage);
-        PrintWindow(child,childDC,0);
+        SendMessageW(child,WM_PRINT,reinterpret_cast<WPARAM>(childDC),PRF_CLIENT|PRF_NONCLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
         BitBlt(memory,childRect.left,childRect.top,width,height,childDC,0,0,SRCCOPY);
         SelectObject(childDC,childOld);DeleteObject(childImage);DeleteDC(childDC);
     }
