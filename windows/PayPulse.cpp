@@ -347,6 +347,7 @@ POINT floatingBodyPoint() {
 }
 void startSmokeDrag() {
     if(settingsWindow)DestroyWindow(settingsWindow);
+    SetWindowPos(mainWindow,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
     GetWindowRect(floatingWindow,&smokeDragOrigin);
     POINT start=floatingBodyPoint();SetCursorPos(start.x,start.y);
     smokeDragTarget={start.x-64,start.y+48};
@@ -392,7 +393,7 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             }
             if(wp==4) {
                 KillTimer(w,4);
-                bool opened=settingsWindow&&IsWindowVisible(settingsWindow)&&GetDlgItem(settingsWindow,SET_SALARY)&&!IsZoomed(floatingWindow);
+                bool opened=settingsWindow&&IsWindowVisible(settingsWindow)&&GetDlgItem(settingsWindow,SET_SALARY)&&GetForegroundWindow()==settingsWindow&&!IsZoomed(floatingWindow);
                 smokeLog(opened?"native floating double-click opened settings":"ERROR: floating double-click did not open settings");
                 if(!opened)smokeExitCode=5;
                 HWND close=GetDlgItem(floatingWindow,FLOAT_CLOSE);RECT button;GetWindowRect(close,&button);SetCursorPos((button.left+button.right)/2,(button.top+button.bottom)/2);
@@ -522,7 +523,8 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
         HWND existing=FindWindowW(L"PayPulse.Main",nullptr);wchar_t title[256]{};if(existing)GetWindowTextW(existing,title,256);
         if(existing&&!wcsstr(title,versionLabel().c_str()))MessageBoxW(nullptr,(L"另一个版本的薪跳仍在后台运行。请先在托盘右键选择「退出」，再打开 "+versionLabel()+L"。").c_str(),L"薪跳 · 更新版本",MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
         else if(existing)PostMessageW(existing,SHOW_APP,0,0);
-        if(mutex)CloseHandle(mutex);return 0;
+        if(mutex)CloseHandle(mutex);
+        return 0;
     }
     // System DPI awareness keeps native controls and custom drawing at one consistent scale.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
