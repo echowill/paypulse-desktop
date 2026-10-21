@@ -7,6 +7,7 @@
 #define NOMINMAX
 #define _WIN32_WINNT 0x0A00
 #include <windows.h>
+#include <windowsx.h>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -23,6 +24,8 @@
 using namespace Gdiplus;
 using namespace paypulse;
 namespace {
+constexpr wchar_t APP_VERSION[]=L"1.0.3";
+std::wstring versionLabel() {return std::wstring(L"v")+APP_VERSION;}
 constexpr UINT TRAY_MESSAGE = WM_APP + 1, SHOW_APP = WM_APP + 2;
 enum ControlId { SET_SALARY=101, SET_START, SET_END, SET_BREAK, SET_BREAK_START, SET_BREAK_END,
               SET_BASIS, SET_DAYS, SET_FOUR, SET_LOGIN, SAVE, CANCEL, OPEN_SETTINGS,
@@ -43,6 +46,8 @@ int smokeExitCode=0;
 double testScale=0;
 int settingsScroll=0;
 double settingsFontScale=0;
+RECT smokeDragOrigin{};
+POINT smokeDragTarget{};
 void smokeLog(const char* message) {
     if(!smokeMode)return;
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+L"PayPulse-smoke.log";
@@ -113,7 +118,7 @@ void drawMain(Graphics& g) {
     text(g,L"仅保存在这台电脑 · 关闭窗口后继续运行",24,559,10,muted,false,320);
 }
 void drawFloating(Graphics& g) {
-    g.Clear(paper); logo(g,15,24,36); text(g,L"今日已赚 · "+stateTitle(earnings.state),65,16,10,muted,false,230);
+    g.Clear(paper); logo(g,15,24,36); text(g,L"今日已赚 · "+stateTitle(earnings.state)+L" · 双击设置",65,16,10,muted,false,230);
     auto value=L"¥ "+amount(earnings.today,settings.fourDecimals?4:2);
     text(g,value,62,37,value.size()>14?21:29,ink,true,239);
 }
@@ -253,7 +258,7 @@ void paintSettings(Graphics& g) {
     g.Restore(state);
 }
 void trayUpdate(bool add=false) {
-    std::wstring tip=L"薪跳 v1.0.2 · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
+    std::wstring tip=L"薪跳 "+versionLabel()+L" · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
     wcsncpy(tray.szTip,tip.c_str(),127); tray.szTip[127]=0;
     tray.uFlags=add?(NIF_ICON|NIF_MESSAGE|NIF_TIP):NIF_TIP;
     Shell_NotifyIconW(add?NIM_ADD:NIM_MODIFY,&tray);
@@ -331,6 +336,28 @@ bool captureWindow(HWND w,const wchar_t* name) {
     SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(nullptr,dc);
     return persisted;
 }
+INPUT mouseInput(DWORD flags) {
+    INPUT input{};input.type=INPUT_MOUSE;input.mi.dwFlags=flags;return input;
+}
+void injectSmokeMouse(INPUT* inputs,UINT count) {
+    if(SendInput(count,inputs,sizeof(INPUT))!=count) {smokeExitCode=5;smokeLog("ERROR: mouse input injection failed");}
+}
+POINT floatingBodyPoint() {
+    POINT p{px(floatingWindow,150),px(floatingWindow,45)};ClientToScreen(floatingWindow,&p);return p;
+}
+void startSmokeDrag() {
+    if(settingsWindow)DestroyWindow(settingsWindow);
+    GetWindowRect(floatingWindow,&smokeDragOrigin);
+    POINT start=floatingBodyPoint();SetCursorPos(start.x,start.y);
+    smokeDragTarget={start.x-64,start.y+48};
+    INPUT down=mouseInput(MOUSEEVENTF_LEFTDOWN);injectSmokeMouse(&down,1);
+    SetTimer(mainWindow,6,100,nullptr);
+}
+void startSmokeDoubleClick() {
+    POINT p=floatingBodyPoint();SetCursorPos(p.x,p.y);
+    INPUT inputs[]={mouseInput(MOUSEEVENTF_LEFTDOWN),mouseInput(MOUSEEVENTF_LEFTUP),mouseInput(MOUSEEVENTF_LEFTDOWN),mouseInput(MOUSEEVENTF_LEFTUP)};
+    injectSmokeMouse(inputs,4);SetTimer(mainWindow,4,350,nullptr);
+}
 LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     if(msg==taskbarCreated) { trayUpdate(true); return 0; }
     switch(msg) {
@@ -342,10 +369,40 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             control(w,L"BUTTON",L"退出",EXIT_APP,355,556,41,25,BS_OWNERDRAW);
             SetTimer(w,1,1000,nullptr); return 0;
         case WM_TIMER:
+            if(wp==6) {
+                KillTimer(w,6);
+                INPUT inputs[]={mouseInput(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE|MOUSEEVENTF_VIRTUALDESK),mouseInput(MOUSEEVENTF_LEFTUP)};
+                inputs[0].mi.dx=static_cast<LONG>((static_cast<long long>(smokeDragTarget.x-GetSystemMetrics(SM_XVIRTUALSCREEN))*65535)/std::max(1,GetSystemMetrics(SM_CXVIRTUALSCREEN)-1));
+                inputs[0].mi.dy=static_cast<LONG>((static_cast<long long>(smokeDragTarget.y-GetSystemMetrics(SM_YVIRTUALSCREEN))*65535)/std::max(1,GetSystemMetrics(SM_CYVIRTUALSCREEN)-1));
+                injectSmokeMouse(inputs,2);SetTimer(w,3,350,nullptr);return 0;
+            }
             if(wp==2) {
+                KillTimer(w,2);
                 smokeLog("smoke timer fired");
                 bool mainOk=captureWindow(mainWindow,L"PayPulse-main.png"),settingsOk=captureWindow(settingsWindow,L"PayPulse-settings.png");captureWindow(floatingWindow,L"PayPulse-floating.png");
                 if(!mainOk||!settingsOk)smokeExitCode=4;
+                startSmokeDrag();return 0;
+            }
+            if(wp==3) {
+                KillTimer(w,3);RECT moved;GetWindowRect(floatingWindow,&moved);
+                bool dragged=std::abs(moved.left-smokeDragOrigin.left+64)<=3&&std::abs(moved.top-smokeDragOrigin.top-48)<=3;
+                smokeLog(dragged?"floating window still drags with native mouse input":"ERROR: floating window drag failed");
+                if(!dragged)smokeExitCode=5;
+                startSmokeDoubleClick();return 0;
+            }
+            if(wp==4) {
+                KillTimer(w,4);
+                bool opened=settingsWindow&&IsWindowVisible(settingsWindow)&&GetDlgItem(settingsWindow,SET_SALARY)&&!IsZoomed(floatingWindow);
+                smokeLog(opened?"native floating double-click opened settings":"ERROR: floating double-click did not open settings");
+                if(!opened)smokeExitCode=5;
+                HWND close=GetDlgItem(floatingWindow,FLOAT_CLOSE);RECT button;GetWindowRect(close,&button);SetCursorPos((button.left+button.right)/2,(button.top+button.bottom)/2);
+                INPUT inputs[]={mouseInput(MOUSEEVENTF_LEFTDOWN),mouseInput(MOUSEEVENTF_LEFTUP)};injectSmokeMouse(inputs,2);
+                SetTimer(w,5,350,nullptr);return 0;
+            }
+            if(wp==5) {
+                KillTimer(w,5);bool closed=!IsWindowVisible(floatingWindow);
+                smokeLog(closed?"floating close button remains usable":"ERROR: floating close button failed");
+                if(!closed)smokeExitCode=5;
                 quit();return 0;
             }
             tick(); return 0;
@@ -417,7 +474,15 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
 LRESULT CALLBACK floatingProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg) {
         case WM_CREATE:control(w,L"BUTTON",L"×",FLOAT_CLOSE,299,5,26,25,BS_OWNERDRAW);return 0;
-        case WM_NCHITTEST: {auto hit=DefWindowProcW(w,msg,wp,lp);return hit==HTCLIENT?HTCAPTION:hit;}
+        case WM_NCHITTEST: {
+            POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};RECT button;HWND close=GetDlgItem(w,FLOAT_CLOSE);
+            if(close&&GetWindowRect(close,&button)&&PtInRect(&button,p))return HTCLIENT;
+            auto hit=DefWindowProcW(w,msg,wp,lp);return hit==HTCLIENT?HTCAPTION:hit;
+        }
+        case WM_NCLBUTTONDBLCLK:
+            if(wp==HTCAPTION) {showSettings();return 0;}
+            break;
+        case WM_LBUTTONDBLCLK:showSettings();return 0;
         case WM_COMMAND:if(LOWORD(wp)==FLOAT_CLOSE) ShowWindow(w,SW_HIDE);return 0;
         case WM_DRAWITEM:drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_ERASEBKGND:return 1;
@@ -434,7 +499,7 @@ HWND makeWindow(const wchar_t* cls,const wchar_t* title,int width,int height,DWO
     return CreateWindowExW(ex,cls,title,style|WS_CLIPCHILDREN,x,y,w,h,nullptr,nullptr,instance,nullptr);
 }
 void showSettings() {
-    if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班 · v1.0.2",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VSCROLL,WS_EX_CONTROLPARENT);
+    if(!settingsWindow) makeWindow(L"PayPulse.Settings",(L"薪跳 · 薪资与排班 · "+versionLabel()).c_str(),534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VSCROLL,WS_EX_CONTROLPARENT);
     ShowWindow(settingsWindow,SW_SHOW);SetForegroundWindow(settingsWindow);SetFocus(GetDlgItem(settingsWindow,SET_SALARY));SendDlgItemMessageW(settingsWindow,SET_SALARY,EM_SETSEL,0,-1);
 }
 void toggleFloating() {
@@ -453,8 +518,9 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     smokeLog("starting");
     HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\PayPulse.Desktop.Instance");
     if(GetLastError()==ERROR_ALREADY_EXISTS) {
+        if(smokeMode) {smokeLog("ERROR: another instance is running during smoke check");if(mutex)CloseHandle(mutex);return 7;}
         HWND existing=FindWindowW(L"PayPulse.Main",nullptr);wchar_t title[256]{};if(existing)GetWindowTextW(existing,title,256);
-        if(existing&&!wcsstr(title,L"v1.0.2"))MessageBoxW(nullptr,L"另一个版本的薪跳仍在后台运行。请先在托盘右键选择「退出」，再打开 v1.0.2。",L"薪跳 · 更新版本",MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
+        if(existing&&!wcsstr(title,versionLabel().c_str()))MessageBoxW(nullptr,(L"另一个版本的薪跳仍在后台运行。请先在托盘右键选择「退出」，再打开 "+versionLabel()+L"。").c_str(),L"薪跳 · 更新版本",MB_OK|MB_ICONINFORMATION|MB_SETFOREGROUND);
         else if(existing)PostMessageW(existing,SHOW_APP,0,0);
         if(mutex)CloseHandle(mutex);return 0;
     }
@@ -464,13 +530,13 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     GdiplusStartupInput startup;ULONG_PTR token=0;if(GdiplusStartup(&token,&startup,nullptr)!=Ok)return 1;
     smokeLog("GDI ready");
     appIcon=LoadIconW(h,MAKEINTRESOURCEW(1));
-    auto reg=[&](const wchar_t* name,WNDPROC proc) {WNDCLASSEXW c{};c.cbSize=sizeof(c);c.hInstance=h;c.lpszClassName=name;c.lpfnWndProc=proc;c.hCursor=LoadCursorW(nullptr,IDC_ARROW);c.hIcon=appIcon;c.hIconSm=appIcon;return RegisterClassExW(&c);};
+    auto reg=[&](const wchar_t* name,WNDPROC proc) {WNDCLASSEXW c{};c.cbSize=sizeof(c);c.style=proc==floatingProc?CS_DBLCLKS:0;c.hInstance=h;c.lpszClassName=name;c.lpfnWndProc=proc;c.hCursor=LoadCursorW(nullptr,IDC_ARROW);c.hIcon=appIcon;c.hIconSm=appIcon;return RegisterClassExW(&c);};
     reg(L"PayPulse.Main",mainProc);reg(L"PayPulse.Settings",settingsProc);reg(L"PayPulse.Floating",floatingProc);
     loadSettings();currentTime=std::time(nullptr);earnings=snapshot(currentTime,settings);
     const bool smokeTest=wcsstr(command,L"--smoke-test")!=nullptr;
     if(smokeTest) {settings=Settings();settings.salary=18000;earnings=snapshot(currentTime,settings);}
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
-    mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse · v1.0.2",420,588,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
+    mainWindow=makeWindow(L"PayPulse.Main",(L"薪跳 PayPulse · "+versionLabel()).c_str(),420,588,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
     smokeLog("main window created");
     if(!mainWindow){GdiplusShutdown(token);return 1;}
     tray.cbSize=sizeof(tray);tray.hWnd=mainWindow;tray.uID=1;tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;tray.uCallbackMessage=TRAY_MESSAGE;tray.hIcon=appIcon;trayUpdate(true);
