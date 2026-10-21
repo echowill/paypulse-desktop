@@ -11,6 +11,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <gdiplus.h>
+#include <dwmapi.h>
 #include <iomanip>
 #include <sstream>
 #include <cwchar>
@@ -38,6 +39,7 @@ std::wstring configPath;
 NOTIFYICONDATAW tray{};
 UINT taskbarCreated;
 bool smokeMode=false;
+int smokeExitCode=0;
 void smokeLog(const char* message) {
     if(!smokeMode)return;
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+L"PayPulse-smoke.log";
@@ -230,7 +232,9 @@ void paintSettings(Graphics& g) {
 }
 void trayUpdate(bool add=false) {
     std::wstring tip=L"薪跳 · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
-    wcsncpy(tray.szTip,tip.c_str(),127); tray.szTip[127]=0; Shell_NotifyIconW(add?NIM_ADD:NIM_MODIFY,&tray);
+    wcsncpy(tray.szTip,tip.c_str(),127); tray.szTip[127]=0;
+    tray.uFlags=add?(NIF_ICON|NIF_MESSAGE|NIF_TIP):NIF_TIP;
+    Shell_NotifyIconW(add?NIM_ADD:NIM_MODIFY,&tray);
 }
 void tick() {
     currentTime=std::time(nullptr); earnings=snapshot(currentTime,settings); trayUpdate();
@@ -261,26 +265,46 @@ void printClient(HWND w,HDC dc) {
     Graphics g(dc);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);
     if(w==mainWindow)drawMain(g);else if(w==settingsWindow)paintSettings(g);else drawFloating(g);
 }
-void captureWindow(HWND w,const wchar_t* name) {
-    RECT r;GetClientRect(w,&r);HDC dc=GetDC(w),memory=CreateCompatibleDC(dc);HBITMAP image=CreateCompatibleBitmap(dc,r.right,r.bottom);
-    HGDIOBJ old=SelectObject(memory,image);
-    // Compose the client and each native child in client coordinates. DefWindowProc
-    // prints children in window coordinates, while GDI+ ignores that viewport origin.
-    printClient(w,memory);
+void paintBuffered(HWND w,void (*draw)(Graphics&)) {
+    PAINTSTRUCT ps;HDC destination=BeginPaint(w,&ps);RECT rect;GetClientRect(w,&rect);
+    HDC memory=CreateCompatibleDC(destination);HBITMAP image=CreateCompatibleBitmap(destination,rect.right,rect.bottom);HGDIOBJ old=SelectObject(memory,image);
+    {
+        Graphics g(memory);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);g.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);draw(g);
+    }
+    // GDI preserves BeginPaint's child-window and update-region clipping. GDI+
+    // DrawImage into the window DC can overwrite native HWND controls.
+    int saved=SaveDC(destination);
     for(HWND child=GetWindow(w,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT)) {
         if(!IsWindowVisible(child))continue;
         RECT childRect;GetWindowRect(child,&childRect);MapWindowPoints(HWND_DESKTOP,w,reinterpret_cast<POINT*>(&childRect),2);
-        int width=childRect.right-childRect.left,height=childRect.bottom-childRect.top;
-        if(width<=0||height<=0)continue;
-        HDC childDC=CreateCompatibleDC(dc);HBITMAP childImage=CreateCompatibleBitmap(dc,width,height);HGDIOBJ childOld=SelectObject(childDC,childImage);
-        SendMessageW(child,WM_PRINT,reinterpret_cast<WPARAM>(childDC),PRF_CLIENT|PRF_NONCLIENT|PRF_CHILDREN|PRF_ERASEBKGND);
-        BitBlt(memory,childRect.left,childRect.top,width,height,childDC,0,0,SRCCOPY);
-        SelectObject(childDC,childOld);DeleteObject(childImage);DeleteDC(childDC);
+        ExcludeClipRect(destination,childRect.left,childRect.top,childRect.right,childRect.bottom);
+    }
+    BitBlt(destination,0,0,rect.right,rect.bottom,memory,0,0,SRCCOPY);
+    RestoreDC(destination,saved);
+    SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);EndPaint(w,&ps);
+}
+bool captureWindow(HWND w,const wchar_t* name) {
+    // Exercise real HWND painting, including parent-only updates that previously
+    // covered controls. Read the resulting client pixels instead of re-rendering it.
+    SetWindowPos(w,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
+    RedrawWindow(w,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+    for(int i=0;i<3;i++) {RedrawWindow(w,nullptr,nullptr,RDW_INVALIDATE|RDW_NOCHILDREN|RDW_UPDATENOW);GdiFlush();DwmFlush();}
+    RECT r;GetClientRect(w,&r);HDC dc=GetDC(nullptr),memory=CreateCompatibleDC(dc);HBITMAP image=CreateCompatibleBitmap(dc,r.right,r.bottom);
+    HGDIOBJ old=SelectObject(memory,image);
+    POINT origin{0,0};ClientToScreen(w,&origin);
+    BitBlt(memory,0,0,r.right,r.bottom,dc,origin.x,origin.y,SRCCOPY|CAPTUREBLT);
+    bool persisted=true;
+    if(w==mainWindow||w==settingsWindow) {
+        const int x=w==mainWindow?228:290,y=w==mainWindow?541:625;
+        COLORREF color=GetPixel(memory,px(w,x),px(w,y));
+        persisted=color!=CLR_INVALID&&GetGValue(color)>GetRValue(color)+20&&GetGValue(color)>GetBValue(color)+10;
+        smokeLog(persisted?"native save/settings button survives parent repaint":"ERROR: native button disappeared after parent repaint");
     }
     UINT count=0,bytes=0;GetImageEncodersSize(&count,&bytes);std::vector<BYTE> info(bytes);auto codecs=reinterpret_cast<ImageCodecInfo*>(info.data());GetImageEncoders(count,bytes,codecs);
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+name;
     {Bitmap bitmap(image,nullptr);for(UINT i=0;i<count;i++)if(wcscmp(codecs[i].MimeType,L"image/png")==0){bitmap.Save(path.c_str(),&codecs[i].Clsid,nullptr);break;}}
-    SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(w,dc);
+    SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(nullptr,dc);
+    return persisted;
 }
 LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     if(msg==taskbarCreated) { trayUpdate(true); return 0; }
@@ -295,7 +319,8 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_TIMER:
             if(wp==2) {
                 smokeLog("smoke timer fired");
-                captureWindow(mainWindow,L"PayPulse-main.png");captureWindow(settingsWindow,L"PayPulse-settings.png");captureWindow(floatingWindow,L"PayPulse-floating.png");
+                bool mainOk=captureWindow(mainWindow,L"PayPulse-main.png"),settingsOk=captureWindow(settingsWindow,L"PayPulse-settings.png");captureWindow(floatingWindow,L"PayPulse-floating.png");
+                if(!mainOk||!settingsOk)smokeExitCode=4;
                 quit();return 0;
             }
             tick(); return 0;
@@ -311,8 +336,7 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             } return 0;
         case WM_DRAWITEM: drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)); return TRUE;
         case WM_ERASEBKGND: return 1;
-        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
-        case WM_PAINT: { PAINTSTRUCT ps; HDC dc=BeginPaint(w,&ps); RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);drawMain(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0; }
+        case WM_PAINT:paintBuffered(w,drawMain);return 0;
         case WM_CLOSE: ShowWindow(w,SW_HIDE); return 0;
         case WM_DESTROY:
             Shell_NotifyIconW(NIM_DELETE,&tray); if(settingsWindow) DestroyWindow(settingsWindow); if(floatingWindow) DestroyWindow(floatingWindow); PostQuitMessage(0);return 0;
@@ -346,8 +370,7 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_DRAWITEM: drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_CTLCOLORBTN: case WM_CTLCOLORSTATIC: {HDC dc=reinterpret_cast<HDC>(wp);SetBkColor(dc,RGB(248,248,241));SetTextColor(dc,RGB(31,51,43));static HBRUSH brush=CreateSolidBrush(RGB(248,248,241));return reinterpret_cast<LRESULT>(brush);}
         case WM_ERASEBKGND:return 1;
-        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
-        case WM_PAINT: {PAINTSTRUCT ps;HDC dc=BeginPaint(w,&ps);RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);paintSettings(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0;}
+        case WM_PAINT:paintBuffered(w,paintSettings);return 0;
         case WM_CLOSE:DestroyWindow(w);return 0;
         case WM_DESTROY:settingsWindow=nullptr;settingsControls.clear();return 0;
     }
@@ -360,8 +383,7 @@ LRESULT CALLBACK floatingProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_COMMAND:if(LOWORD(wp)==FLOAT_CLOSE) ShowWindow(w,SW_HIDE);return 0;
         case WM_DRAWITEM:drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_ERASEBKGND:return 1;
-        case WM_PRINTCLIENT:printClient(w,reinterpret_cast<HDC>(wp));return 0;
-        case WM_PAINT:{PAINTSTRUCT ps;HDC dc=BeginPaint(w,&ps);RECT r;GetClientRect(w,&r);Bitmap buffer(r.right,r.bottom);Graphics g(&buffer);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);drawFloating(g);Graphics dest(dc);dest.DrawImage(&buffer,0,0);EndPaint(w,&ps);return 0;}
+        case WM_PAINT:paintBuffered(w,drawFloating);return 0;
         case WM_CLOSE:ShowWindow(w,SW_HIDE);return 0;
     }
     return DefWindowProcW(w,msg,wp,lp);
@@ -425,5 +447,5 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     GdiplusShutdown(token);
     smokeLog("shutdown complete");
     if(mutex)CloseHandle(mutex);
-    return 0;
+    return smokeExitCode;
 }

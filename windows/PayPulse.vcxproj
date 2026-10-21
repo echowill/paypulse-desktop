@@ -8,7 +8,7 @@
   <PropertyGroup><OutDir>$(ProjectDir)build\vs\</OutDir><IntDir>$(ProjectDir)build\vs-obj\app\</IntDir><TargetName>PayPulse</TargetName><GenerateManifest>false</GenerateManifest></PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><RuntimeLibrary>MultiThreaded</RuntimeLibrary><Optimization>MaxSpeed</Optimization><WarningLevel>Level3</WarningLevel><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
-    <Link><SubSystem>Windows</SubSystem><AdditionalDependencies>gdiplus.lib;comctl32.lib;shell32.lib;ole32.lib;uuid.lib;gdi32.lib;user32.lib;advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+    <Link><SubSystem>Windows</SubSystem><AdditionalDependencies>gdiplus.lib;comctl32.lib;shell32.lib;ole32.lib;uuid.lib;gdi32.lib;user32.lib;advapi32.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup><ClCompile Include="PayPulse.cpp"/><ResourceCompile Include="PayPulse.rc"/></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets"/>
