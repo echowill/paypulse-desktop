@@ -28,6 +28,8 @@
 
 程序没有商业代码签名，下载时可能出现系统信誉提示；核对 GitHub Release 的来源和 SHA-256 后自行决定是否打开，不必关闭系统安全保护。
 
+Windows 压缩包只使用英文文件名，中文说明在 `README.txt` 中使用 UTF-8 编码，不包含 macOS 的 `._` 元数据文件。
+
 ## 从源码编译
 
 Windows：安装 MSYS2 的 UCRT64 GCC 工具链，在对应环境运行 `build-windows.cmd`。
@@ -38,6 +40,7 @@ macOS：安装 Xcode Command Line Tools 和 MinGW-w64 后运行：
 
 ```sh
 ./build.sh /absolute/output/path
+python3 package.py --input /absolute/output/path --output PayPulse-Windows11-x64.zip
 ```
 
 源码采用 MIT License。静态链接的 GCC 运行库适用 GCC Runtime Library Exception；GUI 使用 Windows 系统组件。
