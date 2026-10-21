@@ -49,6 +49,10 @@ jobs:
           }
           Get-Content "$env:TEMP/PayPulse-smoke.log" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "Application exited with $($p.ExitCode)" }
+          $p = Start-Process ./windows/build/vs/PayPulse.exe -ArgumentList '--smoke-test --scale125' -PassThru
+          if (-not $p.WaitForExit(20000)) { $p.Kill(); throw '125% application check timed out' }
+          Get-Content "$env:TEMP/PayPulse-smoke.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "125% repaint check exited with $($p.ExitCode)" }
       - name: Verify published Windows binaries
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
         env:
@@ -65,6 +69,9 @@ jobs:
           $p = Start-Process "$dir/PayPulse.exe" -ArgumentList '--smoke-test' -PassThru
           if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Published application timed out' }
           if ($p.ExitCode -ne 0) { throw "Published application exited with $($p.ExitCode)" }
+          $p = Start-Process "$dir/PayPulse.exe" -ArgumentList '--smoke-test --scale125' -PassThru
+          if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Published 125% check timed out' }
+          if ($p.ExitCode -ne 0) { throw "Published 125% check exited with $($p.ExitCode)" }
       - name: Collect Windows UI renders
         if: always()
         shell: pwsh

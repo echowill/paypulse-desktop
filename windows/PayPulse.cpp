@@ -40,6 +40,7 @@ NOTIFYICONDATAW tray{};
 UINT taskbarCreated;
 bool smokeMode=false;
 int smokeExitCode=0;
+double testScale=0;
 void smokeLog(const char* message) {
     if(!smokeMode)return;
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+L"PayPulse-smoke.log";
@@ -49,7 +50,7 @@ void smokeLog(const char* message) {
 }
 Color paper(255,248,248,241), ink(255,31,51,43), muted(255,114,128,119), green(255,39,100,74), lime(255,209,240,122), lineColor(255,225,230,219);
 
-double scale(HWND w) { return GetDpiForWindow(w) / 96.0; }
+double scale(HWND w) { return testScale>0?testScale:GetDpiForWindow(w)/96.0; }
 int px(HWND w, int value) { return static_cast<int>(value * scale(w) + .5); }
 std::wstring number(double n, int digits=2) {
     std::wostringstream stream; stream.imbue(std::locale::classic()); stream << std::fixed << std::setprecision(digits) << n; return stream.str();
@@ -261,10 +262,6 @@ void trayMenu() {
     POINT p; GetCursorPos(&p); SetForegroundWindow(mainWindow); auto result=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,mainWindow,nullptr); DestroyMenu(menu); PostMessageW(mainWindow,WM_NULL,0,0);
     if(result==1) showMain(); else if(result==2) showSettings(); else if(result==3) toggleFloating(); else if(result==4) {settings.hidden=!settings.hidden;storeSettings();tick();} else if(result==5) quit();
 }
-void printClient(HWND w,HDC dc) {
-    Graphics g(dc);g.ScaleTransform(static_cast<REAL>(scale(w)),static_cast<REAL>(scale(w)));g.SetSmoothingMode(SmoothingModeAntiAlias);
-    if(w==mainWindow)drawMain(g);else if(w==settingsWindow)paintSettings(g);else drawFloating(g);
-}
 void paintBuffered(HWND w,void (*draw)(Graphics&)) {
     PAINTSTRUCT ps;HDC destination=BeginPaint(w,&ps);RECT rect;GetClientRect(w,&rect);
     HDC memory=CreateCompatibleDC(destination);HBITMAP image=CreateCompatibleBitmap(destination,rect.right,rect.bottom);HGDIOBJ old=SelectObject(memory,image);
@@ -301,7 +298,9 @@ bool captureWindow(HWND w,const wchar_t* name) {
         smokeLog(persisted?"native save/settings button survives parent repaint":"ERROR: native button disappeared after parent repaint");
     }
     UINT count=0,bytes=0;GetImageEncodersSize(&count,&bytes);std::vector<BYTE> info(bytes);auto codecs=reinterpret_cast<ImageCodecInfo*>(info.data());GetImageEncoders(count,bytes,codecs);
-    wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+name;
+    wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring filename=name;
+    if(testScale>1)filename.insert(filename.size()-4,L"-125");
+    std::wstring path=std::wstring(temp)+filename;
     {Bitmap bitmap(image,nullptr);for(UINT i=0;i<count;i++)if(wcscmp(codecs[i].MimeType,L"image/png")==0){bitmap.Save(path.c_str(),&codecs[i].Clsid,nullptr);break;}}
     SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(nullptr,dc);
     return persisted;
@@ -389,7 +388,7 @@ LRESULT CALLBACK floatingProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     return DefWindowProcW(w,msg,wp,lp);
 }
 HWND makeWindow(const wchar_t* cls,const wchar_t* title,int width,int height,DWORD style,DWORD ex=0) {
-    UINT dpi=GetDpiForSystem();RECT rect{0,0,MulDiv(width,static_cast<int>(dpi),96),MulDiv(height,static_cast<int>(dpi),96)};
+    UINT dpi=testScale>0?static_cast<UINT>(96*testScale):GetDpiForSystem();RECT rect{0,0,MulDiv(width,static_cast<int>(dpi),96),MulDiv(height,static_cast<int>(dpi),96)};
     AdjustWindowRectExForDpi(&rect,style,FALSE,ex,dpi);
     RECT work;SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);int w=rect.right-rect.left,h=rect.bottom-rect.top;
     int x=work.left+(work.right-work.left-w)/2,y=std::max(work.top,work.top+(work.bottom-work.top-h)/2);
@@ -411,6 +410,7 @@ void toggleFloating() {
 int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     instance=h;
     smokeMode=wcsstr(command,L"--smoke-test")!=nullptr;
+    if(smokeMode&&wcsstr(command,L"--scale125"))testScale=1.25;
     smokeLog("starting");
     HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\PayPulse.Desktop.Instance");
     if(GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"PayPulse.Main",nullptr);if(existing)PostMessageW(existing,SHOW_APP,0,0);if(mutex)CloseHandle(mutex);return 0;}
