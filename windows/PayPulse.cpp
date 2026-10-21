@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cwchar>
+#include <cstring>
 #include <vector>
 #include "SalaryEngine.hpp"
 
@@ -181,7 +182,8 @@ Settings formSettings() {
 void updateEnabledControls() {
     EnableWindow(GetDlgItem(settingsWindow,SET_BREAK_START),checked(settingsWindow,SET_BREAK)); EnableWindow(GetDlgItem(settingsWindow,SET_BREAK_END),checked(settingsWindow,SET_BREAK));
     EnableWindow(GetDlgItem(settingsWindow,SET_DAYS),SendDlgItemMessageW(settingsWindow,SET_BASIS,CB_GETCURSEL,0,0)==1);
-    InvalidateRect(settingsWindow,nullptr,FALSE);
+    RECT rateRect{px(settingsWindow,28),px(settingsWindow,480),px(settingsWindow,506),px(settingsWindow,511)};
+    InvalidateRect(settingsWindow,&rateRect,FALSE);
 }
 void makeSettingsControls() {
     smokeLog("settings controls begin");
@@ -294,7 +296,15 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             if(LOWORD(wp)==CANCEL||LOWORD(wp)==IDCANCEL) {DestroyWindow(w);return 0;}
             if(HIWORD(wp)==BN_CLICKED||HIWORD(wp)==CBN_SELCHANGE||HIWORD(wp)==EN_CHANGE) updateEnabledControls();
             return 0;
-        case WM_NOTIFY: InvalidateRect(w,nullptr,FALSE);return 0;
+        case WM_NOTIFY:
+            // Native controls also notify while painting. Invalidating the whole
+            // parent for those notifications creates an endless paint loop and
+            // starves low-priority WM_TIMER messages.
+            if(reinterpret_cast<NMHDR*>(lp)->code==DTN_DATETIMECHANGE) {
+                RECT rateRect{px(w,28),px(w,480),px(w,506),px(w,511)};
+                InvalidateRect(w,&rateRect,FALSE);
+            }
+            return 0;
         case WM_DRAWITEM: drawButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lp));return TRUE;
         case WM_CTLCOLORBTN: case WM_CTLCOLORSTATIC: {HDC dc=reinterpret_cast<HDC>(wp);SetBkColor(dc,RGB(248,248,241));SetTextColor(dc,RGB(31,51,43));static HBRUSH brush=CreateSolidBrush(RGB(248,248,241));return reinterpret_cast<LRESULT>(brush);}
         case WM_ERASEBKGND:return 1;
@@ -321,7 +331,7 @@ HWND makeWindow(const wchar_t* cls,const wchar_t* title,int width,int height,DWO
     AdjustWindowRectExForDpi(&rect,style,FALSE,ex,dpi);
     RECT work;SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);int w=rect.right-rect.left,h=rect.bottom-rect.top;
     int x=work.left+(work.right-work.left-w)/2,y=std::max(work.top,work.top+(work.bottom-work.top-h)/2);
-    return CreateWindowExW(ex,cls,title,style,x,y,w,h,nullptr,nullptr,instance,nullptr);
+    return CreateWindowExW(ex,cls,title,style|WS_CLIPCHILDREN,x,y,w,h,nullptr,nullptr,instance,nullptr);
 }
 void showSettings() {
     if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,WS_EX_CONTROLPARENT);
