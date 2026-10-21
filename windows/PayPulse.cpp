@@ -210,7 +210,7 @@ Settings formSettings() {
 void updateEnabledControls() {
     EnableWindow(GetDlgItem(settingsWindow,SET_BREAK_START),checked(settingsWindow,SET_BREAK)); EnableWindow(GetDlgItem(settingsWindow,SET_BREAK_END),checked(settingsWindow,SET_BREAK));
     EnableWindow(GetDlgItem(settingsWindow,SET_DAYS),SendDlgItemMessageW(settingsWindow,SET_BASIS,CB_GETCURSEL,0,0)==1);
-    RECT rateRect{px(settingsWindow,28),px(settingsWindow,480),px(settingsWindow,506),px(settingsWindow,511)};
+    RECT rateRect{px(settingsWindow,28),px(settingsWindow,480-settingsScroll),px(settingsWindow,506),px(settingsWindow,511-settingsScroll)};
     InvalidateRect(settingsWindow,&rateRect,FALSE);
 }
 void makeSettingsControls() {
@@ -390,7 +390,7 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
                 bool login=checked(w,SET_LOGIN);
                 Settings previous=settings; settings=updated;
                 if(!storeSettings()) {settings=previous;MessageBoxW(w,L"设置保存失败，请检查本地应用数据文件夹的写入权限。",L"薪跳",MB_OK|MB_ICONERROR);return 0;}
-                if(login!=loginEnabled()&&!setLogin(login)) MessageBoxW(w,L"薪资设置已保存，但自动启动设置未成功。可以稍后重试。",L"薪跳",MB_OK|MB_ICONINFORMATION);
+                if((login||login!=loginEnabled())&&!setLogin(login)) MessageBoxW(w,L"薪资设置已保存，但自动启动设置未成功。可以稍后重试。",L"薪跳",MB_OK|MB_ICONINFORMATION);
                 DestroyWindow(w); tick(); showMain(); if(!floatingWindow) toggleFloating(); return 0;
             }
             if(LOWORD(wp)==CANCEL||LOWORD(wp)==IDCANCEL) {DestroyWindow(w);return 0;}
@@ -401,7 +401,7 @@ LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             // parent for those notifications creates an endless paint loop and
             // starves low-priority WM_TIMER messages.
             if(reinterpret_cast<NMHDR*>(lp)->code==DTN_DATETIMECHANGE) {
-                RECT rateRect{px(w,28),px(w,480),px(w,506),px(w,511)};
+                RECT rateRect{px(w,28),px(w,480-settingsScroll),px(w,506),px(w,511-settingsScroll)};
                 InvalidateRect(w,&rateRect,FALSE);
             }
             return 0;
