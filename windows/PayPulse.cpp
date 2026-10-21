@@ -35,6 +35,14 @@ std::time_t currentTime = 0;
 std::wstring configPath;
 NOTIFYICONDATAW tray{};
 UINT taskbarCreated;
+bool smokeMode=false;
+void smokeLog(const char* message) {
+    if(!smokeMode)return;
+    wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+L"PayPulse-smoke.log";
+    HANDLE file=CreateFileW(path.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return;
+    DWORD written;WriteFile(file,message,static_cast<DWORD>(strlen(message)),&written,nullptr);WriteFile(file,"\r\n",2,&written,nullptr);CloseHandle(file);
+}
 Color paper(255,248,248,241), ink(255,31,51,43), muted(255,114,128,119), green(255,39,100,74), lime(255,209,240,122), lineColor(255,225,230,219);
 
 double scale(HWND w) { return GetDpiForWindow(w) / 96.0; }
@@ -176,6 +184,7 @@ void updateEnabledControls() {
     InvalidateRect(settingsWindow,nullptr,FALSE);
 }
 void makeSettingsControls() {
+    smokeLog("settings controls begin");
     settingsControls.clear();
     control(settingsWindow,L"EDIT",settings.salary>0?number(settings.salary).c_str():L"",SET_SALARY,62,112,444,48,WS_BORDER|ES_AUTOHSCROLL,true);
     control(settingsWindow,DATETIMEPICK_CLASSW,L"",SET_START,28,238,215,30,DTS_TIMEFORMAT|DTS_UPDOWN);
@@ -195,6 +204,7 @@ void makeSettingsControls() {
     check(settingsWindow,SET_BREAK,settings.breakEnabled); check(settingsWindow,SET_FOUR,settings.fourDecimals); check(settingsWindow,SET_LOGIN,loginEnabled());
     setTime(settingsWindow,SET_START,settings.start); setTime(settingsWindow,SET_END,settings.end); setTime(settingsWindow,SET_BREAK_START,settings.breakStart); setTime(settingsWindow,SET_BREAK_END,settings.breakEnd);
     layoutSettings(); updateEnabledControls();
+    smokeLog("settings controls ready");
 }
 void paintSettings(Graphics& g) {
     g.Clear(paper); logo(g,28,23,36); text(g,L"让收入跟上你的节奏",79,20,22,ink,true,440); text(g,L"设置一次，薪跳会在工作时段自动计薪。",80,51,11,muted,false,425);
@@ -219,7 +229,7 @@ void tick() {
 }
 void showMain() { ShowWindow(mainWindow,SW_SHOWNORMAL); SetForegroundWindow(mainWindow); tick(); }
 void showSettings(); void toggleFloating();
-void quit() { DestroyWindow(mainWindow); }
+void quit() { smokeLog("destroying main window"); DestroyWindow(mainWindow); }
 void drawButton(const DRAWITEMSTRUCT& d) {
     wchar_t label[128]; GetWindowTextW(d.hwndItem,label,128);
     Graphics g(d.hDC); auto s=scale(d.hwndItem); g.ScaleTransform(static_cast<REAL>(s),static_cast<REAL>(s)); g.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -248,7 +258,7 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
             control(w,L"BUTTON",L"退出",EXIT_APP,355,578,41,25,BS_OWNERDRAW);
             SetTimer(w,1,1000,nullptr); return 0;
         case WM_TIMER:
-            if(wp==2) { quit(); return 0; }
+            if(wp==2) { smokeLog("smoke timer fired");quit(); return 0; }
             tick(); return 0;
         case SHOW_APP: showMain(); return 0;
         case TRAY_MESSAGE:
@@ -328,12 +338,15 @@ void toggleFloating() {
 }
 int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     instance=h;
+    smokeMode=wcsstr(command,L"--smoke-test")!=nullptr;
+    smokeLog("starting");
     HANDLE mutex=CreateMutexW(nullptr,FALSE,L"Local\\PayPulse.Desktop.Instance");
     if(GetLastError()==ERROR_ALREADY_EXISTS) {HWND existing=FindWindowW(L"PayPulse.Main",nullptr);if(existing)PostMessageW(existing,SHOW_APP,0,0);if(mutex)CloseHandle(mutex);return 0;}
     // System DPI awareness keeps native controls and custom drawing at one consistent scale.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_DATE_CLASSES|ICC_STANDARD_CLASSES};InitCommonControlsEx(&common);
     GdiplusStartupInput startup;ULONG_PTR token=0;if(GdiplusStartup(&token,&startup,nullptr)!=Ok)return 1;
+    smokeLog("GDI ready");
     appIcon=LoadIconW(h,MAKEINTRESOURCEW(1));
     auto reg=[&](const wchar_t* name,WNDPROC proc) {WNDCLASSEXW c{};c.cbSize=sizeof(c);c.hInstance=h;c.lpszClassName=name;c.lpfnWndProc=proc;c.hCursor=LoadCursorW(nullptr,IDC_ARROW);c.hIcon=appIcon;c.hIconSm=appIcon;return RegisterClassExW(&c);};
     reg(L"PayPulse.Main",mainProc);reg(L"PayPulse.Settings",settingsProc);reg(L"PayPulse.Floating",floatingProc);
@@ -342,19 +355,25 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     if(smokeTest) {settings=Settings();settings.salary=18000;earnings=snapshot(currentTime,settings);}
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
     mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse",420,608,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
+    smokeLog("main window created");
     if(!mainWindow){GdiplusShutdown(token);return 1;}
     tray.cbSize=sizeof(tray);tray.hWnd=mainWindow;tray.uID=1;tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;tray.uCallbackMessage=TRAY_MESSAGE;tray.hIcon=appIcon;trayUpdate(true);
+    smokeLog("tray ready");
     if(smokeTest) {
-        showMain();toggleFloating();showSettings();
+        showMain();smokeLog("main shown");toggleFloating();smokeLog("floating ready");showSettings();smokeLog("settings shown");
         if(!floatingWindow||!settingsWindow||!GetDlgItem(settingsWindow,SET_SALARY)||!GetDlgItem(settingsWindow,SET_START)) {DestroyWindow(mainWindow);GdiplusShutdown(token);return 2;}
         SetTimer(mainWindow,2,1500,nullptr);
+        smokeLog("timer armed");
     }
     else if(!settings.error().empty())showSettings();
     else {toggleFloating();if(!wcsstr(command,L"--background"))showMain();}
+    smokeLog("message loop");
     MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){if(settingsWindow&&IsDialogMessageW(settingsWindow,&msg))continue;TranslateMessage(&msg);DispatchMessageW(&msg);}
+    smokeLog("message loop exited");
     if(controlFont)DeleteObject(controlFont);
     if(largeFont)DeleteObject(largeFont);
     GdiplusShutdown(token);
+    smokeLog("shutdown complete");
     if(mutex)CloseHandle(mutex);
     return 0;
 }

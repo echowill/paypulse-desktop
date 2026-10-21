@@ -41,7 +41,12 @@ jobs:
           & ./windows/build/vs/EngineChecks.exe
           if ($LASTEXITCODE -ne 0) { throw 'Core checks failed' }
           $p = Start-Process ./windows/build/vs/PayPulse.exe -ArgumentList '--smoke-test' -PassThru
-          if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Application smoke test timed out' }
+          if (-not $p.WaitForExit(20000)) {
+            Get-Content "$env:TEMP/PayPulse-smoke.log" -ErrorAction SilentlyContinue
+            $p.Kill()
+            throw 'Application smoke test timed out'
+          }
+          Get-Content "$env:TEMP/PayPulse-smoke.log" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "Application exited with $($p.ExitCode)" }
       - name: Verify published Windows binaries
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
