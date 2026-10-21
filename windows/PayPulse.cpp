@@ -295,6 +295,10 @@ bool captureWindow(HWND w,const wchar_t* name) {
         const int x=w==mainWindow?228:290,y=w==mainWindow?541:625;
         COLORREF color=GetPixel(memory,px(w,x),px(w,y));
         persisted=color!=CLR_INVALID&&GetGValue(color)>GetRValue(color)+20&&GetGValue(color)>GetBValue(color)+10;
+        if(w==settingsWindow) {
+            COLORREF field=GetPixel(memory,px(w,490),px(w,130));
+            persisted=persisted&&field!=CLR_INVALID&&GetRValue(field)>=250&&GetGValue(field)>=250&&GetBValue(field)>=250;
+        }
         smokeLog(persisted?"native save/settings button survives parent repaint":"ERROR: native button disappeared after parent repaint");
     }
     UINT count=0,bytes=0;GetImageEncodersSize(&count,&bytes);std::vector<BYTE> info(bytes);auto codecs=reinterpret_cast<ImageCodecInfo*>(info.data());GetImageEncoders(count,bytes,codecs);
