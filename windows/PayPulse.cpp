@@ -41,6 +41,8 @@ UINT taskbarCreated;
 bool smokeMode=false;
 int smokeExitCode=0;
 double testScale=0;
+int settingsScroll=0;
+double settingsFontScale=0;
 void smokeLog(const char* message) {
     if(!smokeMode)return;
     wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);std::wstring path=std::wstring(temp)+L"PayPulse-smoke.log";
@@ -156,11 +158,23 @@ std::vector<Control> settingsControls;
 void layoutSettings() {
     if(!settingsWindow) return;
     double s=scale(settingsWindow);
-    if(controlFont) DeleteObject(controlFont);
-    if(largeFont) DeleteObject(largeFont);
-    controlFont=CreateFontW(-static_cast<int>(14*s),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
-    largeFont=CreateFontW(-static_cast<int>(28*s),0,0,0,FW_MEDIUM,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-    for(auto& c:settingsControls) { MoveWindow(c.window,px(settingsWindow,c.x),px(settingsWindow,c.y),px(settingsWindow,c.w),px(settingsWindow,c.h),TRUE); SendMessageW(c.window,WM_SETFONT,reinterpret_cast<WPARAM>(c.large?largeFont:controlFont),TRUE); }
+    bool fontsChanged=!controlFont||std::abs(settingsFontScale-s)>.001;
+    if(fontsChanged) {
+        if(controlFont) DeleteObject(controlFont);
+        if(largeFont) DeleteObject(largeFont);
+        controlFont=CreateFontW(-static_cast<int>(14*s),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
+        largeFont=CreateFontW(-static_cast<int>(28*s),0,0,0,FW_MEDIUM,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+        settingsFontScale=s;
+    }
+    RECT client;GetClientRect(settingsWindow,&client);int height=static_cast<int>(client.bottom/s),viewport=std::max(1,height-64);
+    settingsScroll=std::clamp(settingsScroll,0,std::max(0,604-viewport));
+    SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE|SIF_POS,0,603,static_cast<UINT>(viewport),settingsScroll,0};SetScrollInfo(settingsWindow,SB_VERT,&info,TRUE);
+    for(auto& c:settingsControls) {
+        int id=GetDlgCtrlID(c.window);bool footer=id==SAVE||id==CANCEL;int y=footer?height-53:c.y-settingsScroll;
+        MoveWindow(c.window,px(settingsWindow,c.x),px(settingsWindow,y),px(settingsWindow,c.w),px(settingsWindow,c.h),TRUE);
+        ShowWindow(c.window,footer||(y>=0&&y+c.h<=viewport)?SW_SHOWNA:SW_HIDE);
+        if(fontsChanged)SendMessageW(c.window,WM_SETFONT,reinterpret_cast<WPARAM>(c.large?largeFont:controlFont),TRUE);
+    }
 }
 HWND control(HWND parent,const wchar_t* cls,const wchar_t* caption,int id,int x,int y,int w,int h,DWORD extra=0,bool large=false) {
     auto result=CreateWindowExW(0,cls,caption,WS_CHILD|WS_VISIBLE|WS_TABSTOP|extra,px(parent,x),px(parent,y),px(parent,w),px(parent,h),parent,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),instance,nullptr);
@@ -220,7 +234,10 @@ void makeSettingsControls() {
     smokeLog("settings controls ready");
 }
 void paintSettings(Graphics& g) {
-    g.Clear(paper); logo(g,28,23,36); text(g,L"让收入跟上你的节奏",79,20,22,ink,true,440); text(g,L"设置一次，薪跳会在工作时段自动计薪。",80,51,11,muted,false,425);
+    g.Clear(paper);RECT client;GetClientRect(settingsWindow,&client);auto state=g.Save();
+    g.SetClip(RectF(0,0,static_cast<REAL>(client.right/scale(settingsWindow)),static_cast<REAL>(client.bottom/scale(settingsWindow)-64)));
+    g.TranslateTransform(0,static_cast<REAL>(-settingsScroll));
+    logo(g,28,23,36); text(g,L"让收入跟上你的节奏",79,20,22,ink,true,440); text(g,L"设置一次，薪跳会在工作时段自动计薪。",80,51,11,muted,false,425);
     text(g,L"01   你的月薪",28,88,12,green,true); text(g,L"¥",28,121,25,green);
     text(g,L"02   工作与休息",28,190,12,green,true); text(g,L"上班",28,215,11,muted); text(g,L"下班 · 早于上班表示次日",291,215,11,muted,false,220);
     text(g,L"—",261,241,14,muted); text(g,L"—",261,321,14,muted);
@@ -230,6 +247,7 @@ void paintSettings(Graphics& g) {
     auto label=draft.error().empty()?L"折合时薪 ¥ "+number(snapshot(currentTime,draft).hourly)+L" / 小时":L"填写有效月薪、时间和工作日后计算时薪";
     text(g,label,28,483,12,green,true,478);
     text(g,L"仅本机保存 · 修改规则会回算本月预估收入，不是实际工资单。",28,585,10,muted,false,478);
+    g.Restore(state);
 }
 void trayUpdate(bool add=false) {
     std::wstring tip=L"薪跳 · "+stateTitle(earnings.state)+L"\n今日已赚 ¥"+amount(earnings.today,settings.fourDecimals?4:2)+L"\n点击查看详情，右键打开菜单";
@@ -292,8 +310,8 @@ bool captureWindow(HWND w,const wchar_t* name) {
     BitBlt(memory,0,0,r.right,r.bottom,dc,origin.x,origin.y,SRCCOPY|CAPTUREBLT);
     bool persisted=true;
     if(w==mainWindow||w==settingsWindow) {
-        const int x=w==mainWindow?228:290,y=w==mainWindow?541:625;
-        COLORREF color=GetPixel(memory,px(w,x),px(w,y));
+        HWND button=GetDlgItem(w,w==mainWindow?OPEN_SETTINGS:SAVE);RECT buttonRect;GetWindowRect(button,&buttonRect);MapWindowPoints(HWND_DESKTOP,w,reinterpret_cast<POINT*>(&buttonRect),2);
+        COLORREF color=GetPixel(memory,buttonRect.left+px(w,13),buttonRect.top+px(w,10));
         persisted=color!=CLR_INVALID&&GetGValue(color)>GetRValue(color)+20&&GetGValue(color)>GetBValue(color)+10;
         if(w==settingsWindow) {
             COLORREF field=GetPixel(memory,px(w,490),px(w,130));
@@ -348,7 +366,20 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
 }
 LRESULT CALLBACK settingsProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg) {
-        case WM_CREATE: settingsWindow=w; makeSettingsControls(); return 0;
+        case WM_CREATE: settingsWindow=w;settingsScroll=0;makeSettingsControls();return 0;
+        case WM_SIZE:if(!settingsControls.empty())layoutSettings();return 0;
+        case WM_MOUSEWHEEL:
+            settingsScroll-=GET_WHEEL_DELTA_WPARAM(wp)/WHEEL_DELTA*36;layoutSettings();InvalidateRect(w,nullptr,FALSE);return 0;
+        case WM_VSCROLL:{
+            SCROLLINFO info{sizeof(info),SIF_ALL,0,0,0,0,0};GetScrollInfo(w,SB_VERT,&info);
+            switch(LOWORD(wp)) {
+                case SB_LINEUP:settingsScroll-=24;break;case SB_LINEDOWN:settingsScroll+=24;break;
+                case SB_PAGEUP:settingsScroll-=static_cast<int>(info.nPage);break;case SB_PAGEDOWN:settingsScroll+=static_cast<int>(info.nPage);break;
+                case SB_THUMBTRACK:case SB_THUMBPOSITION:settingsScroll=info.nTrackPos;break;
+                case SB_TOP:settingsScroll=0;break;case SB_BOTTOM:settingsScroll=info.nMax;break;
+            }
+            layoutSettings();InvalidateRect(w,nullptr,FALSE);return 0;
+        }
         case WM_COMMAND:
             if(LOWORD(wp)==SAVE||LOWORD(wp)==IDOK) {
                 auto updated=formSettings(); auto error=updated.error(); if(!error.empty()) {MessageBoxW(w,error.c_str(),L"请检查设置",MB_OK|MB_ICONINFORMATION);return 0;}
@@ -399,7 +430,7 @@ HWND makeWindow(const wchar_t* cls,const wchar_t* title,int width,int height,DWO
     return CreateWindowExW(ex,cls,title,style|WS_CLIPCHILDREN,x,y,w,h,nullptr,nullptr,instance,nullptr);
 }
 void showSettings() {
-    if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,WS_EX_CONTROLPARENT);
+    if(!settingsWindow) makeWindow(L"PayPulse.Settings",L"薪跳 · 薪资与排班",534,668,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_VSCROLL,WS_EX_CONTROLPARENT);
     ShowWindow(settingsWindow,SW_SHOW);SetForegroundWindow(settingsWindow);SetFocus(GetDlgItem(settingsWindow,SET_SALARY));SendDlgItemMessageW(settingsWindow,SET_SALARY,EM_SETSEL,0,-1);
 }
 void toggleFloating() {
