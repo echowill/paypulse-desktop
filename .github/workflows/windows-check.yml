@@ -1,0 +1,61 @@
+name: Windows build and smoke test
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional release tag to verify published binaries
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the calendar engine and compile the Mac app
+        working-directory: macos
+        run: |
+          swift run SalaryEngineChecks
+          swift build -c release
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with the Windows SDK and MSVC
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
+          & $msbuild windows/PayPulse.vcxproj /p:Configuration=Release /p:Platform=x64 /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Application build failed' }
+          & $msbuild windows/EngineChecks.vcxproj /p:Configuration=Release /p:Platform=x64 /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Engine checks build failed' }
+      - name: Run core checks and initialize all native windows
+        shell: pwsh
+        run: |
+          & ./windows/build/vs/EngineChecks.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Core checks failed' }
+          $p = Start-Process ./windows/build/vs/PayPulse.exe -ArgumentList '--smoke-test' -PassThru
+          if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Application smoke test timed out' }
+          if ($p.ExitCode -ne 0) { throw "Application exited with $($p.ExitCode)" }
+      - name: Verify published Windows binaries
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: pwsh
+        run: |
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern PayPulse-Windows11-x64.zip --dir "$env:RUNNER_TEMP/release"
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          Expand-Archive "$env:RUNNER_TEMP/release/PayPulse-Windows11-x64.zip" "$env:RUNNER_TEMP/release/unpacked"
+          $dir = "$env:RUNNER_TEMP/release/unpacked/PayPulse-Windows11-x64"
+          & "$dir/EngineChecks.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Published engine checks failed' }
+          $p = Start-Process "$dir/PayPulse.exe" -ArgumentList '--smoke-test' -PassThru
+          if (-not $p.WaitForExit(20000)) { $p.Kill(); throw 'Published application timed out' }
+          if ($p.ExitCode -ne 0) { throw "Published application exited with $($p.ExitCode)" }
