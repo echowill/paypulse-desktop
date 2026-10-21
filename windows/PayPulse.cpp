@@ -105,12 +105,12 @@ void drawMain(Graphics& g) {
     text(g,L"折合时薪",24,321,12,muted); text(g,L"¥"+amount(earnings.hourly),24,345,22,ink,true,175);
     text(g,earnings.nextLabel.empty()?stateTitle(earnings.state):earnings.nextLabel,226,321,12,muted);
     text(g,countdown(),226,345,22,ink,true,174);
-    Pen divider(lineColor); g.DrawLine(&divider,210,324,210,382); g.DrawLine(&divider,24,407,396,407);
-    text(g,L"今日排班",24,427,12,muted);
-    text(g,clockText(settings.start)+L" — "+clockText(settings.end)+(settings.end<settings.start?L" 次日":L""),223,427,12,ink,false,175);
-    text(g,L"本月预估已赚",24,459,12,muted); text(g,L"¥"+amount(earnings.month),251,459,13,ink,true,147);
-    text(g,L"按当前排班回算 · "+(settings.fixedBasis ? L"固定 "+number(settings.fixedDays)+L" 天/月" : L"本月 "+std::to_wstring(earnings.monthWorkdays)+L" 个排班工作日"),24,489,10,muted,false,372);
-    text(g,L"仅保存在这台电脑 · 关闭窗口后继续运行",24,581,10,muted,false,350);
+    Pen divider(lineColor); g.DrawLine(&divider,210,324,210,382); g.DrawLine(&divider,24,397,396,397);
+    text(g,L"今日排班",24,417,12,muted);
+    text(g,clockText(settings.start)+L" — "+clockText(settings.end)+(settings.end<settings.start?L" 次日":L""),223,417,12,ink,false,175);
+    text(g,L"本月预估已赚",24,449,12,muted); text(g,L"¥"+amount(earnings.month),251,449,13,ink,true,147);
+    text(g,L"按当前排班回算 · "+(settings.fixedBasis ? L"固定 "+number(settings.fixedDays)+L" 天/月" : L"本月 "+std::to_wstring(earnings.monthWorkdays)+L" 个排班工作日"),24,479,10,muted,false,372);
+    text(g,L"仅保存在这台电脑 · 关闭窗口后继续运行",24,559,10,muted,false,320);
 }
 void drawFloating(Graphics& g) {
     g.Clear(paper); logo(g,15,24,36); text(g,L"今日已赚 · "+stateTitle(earnings.state),65,16,10,muted,false,230);
@@ -333,9 +333,9 @@ LRESULT CALLBACK mainProc(HWND w,UINT msg,WPARAM wp,LPARAM lp) {
         case WM_CREATE:
             mainWindow=w;
             control(w,L"BUTTON",L"隐藏金额",PRIVACY,316,22,80,32,BS_OWNERDRAW);
-            control(w,L"BUTTON",L"桌面悬浮窗",FLOATING,24,530,177,36,BS_OWNERDRAW);
-            control(w,L"BUTTON",L"薪资与排班",OPEN_SETTINGS,215,530,181,36,BS_OWNERDRAW);
-            control(w,L"BUTTON",L"退出",EXIT_APP,355,578,41,25,BS_OWNERDRAW);
+            control(w,L"BUTTON",L"桌面悬浮窗",FLOATING,24,510,177,36,BS_OWNERDRAW);
+            control(w,L"BUTTON",L"薪资与排班",OPEN_SETTINGS,215,510,181,36,BS_OWNERDRAW);
+            control(w,L"BUTTON",L"退出",EXIT_APP,355,556,41,25,BS_OWNERDRAW);
             SetTimer(w,1,1000,nullptr); return 0;
         case WM_TIMER:
             if(wp==2) {
@@ -466,7 +466,7 @@ int WINAPI wWinMain(HINSTANCE h,HINSTANCE,PWSTR command,int) {
     const bool smokeTest=wcsstr(command,L"--smoke-test")!=nullptr;
     if(smokeTest) {settings=Settings();settings.salary=18000;earnings=snapshot(currentTime,settings);}
     taskbarCreated=RegisterWindowMessageW(L"TaskbarCreated");
-    mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse · v1.0.2",420,608,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
+    mainWindow=makeWindow(L"PayPulse.Main",L"薪跳 PayPulse · v1.0.2",420,588,WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX);
     smokeLog("main window created");
     if(!mainWindow){GdiplusShutdown(token);return 1;}
     tray.cbSize=sizeof(tray);tray.hWnd=mainWindow;tray.uID=1;tray.uFlags=NIF_ICON|NIF_MESSAGE|NIF_TIP;tray.uCallbackMessage=TRAY_MESSAGE;tray.hIcon=appIcon;trayUpdate(true);
