@@ -33,6 +33,16 @@
 
 Windows 压缩包只使用英文文件名，中文说明在 `README.txt` 中使用 UTF-8 编码，不包含 macOS 的 `._` 元数据文件。
 
+## 卸载与清理
+
+1. 在设置中关闭「登录时启动」，保存，移除当前用户的 `PayPulse` 登录启动项。
+2. 在托盘菜单选择「退出」，然后删除解压出来的程序文件夹。
+3. 如需同时删除月薪和排班设置，删除 `%LOCALAPPDATA%\PayPulse` 文件夹。
+
+程序不安装系统服务，不需要管理员权限。如果已删除程序，可在 Windows「设置 → 应用 → 启动」中禁用 PayPulse；残留的注册表启动项位于 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`，名称为 `PayPulse`。
+
+参见 [Privacy policy](../PRIVACY.md) 和 [Code signing policy](../CODE_SIGNING_POLICY.md)。当前 Windows 发布包尚未使用 SignPath 签名。
+
 ## 从源码编译
 
 Windows：安装 MSYS2 的 UCRT64 GCC 工具链，在对应环境运行 `build-windows.cmd`。

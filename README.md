@@ -15,6 +15,8 @@
 
 两个版本都没有商业开发者签名；Mac 使用本地临时签名。下载来源和 SHA-256 可与 Release 附件核对。无需关闭系统安全保护。
 
+正在准备申请 SignPath Foundation 开源项目免费签名，尚未获批、尚未提供 SignPath 签名的版本。详见 [Code signing policy](CODE_SIGNING_POLICY.md) 和 [Privacy policy](PRIVACY.md)。
+
 ## 功能
 
 - 月薪、上下班、休息时间和每周工作日配置，支持跨夜班次。
