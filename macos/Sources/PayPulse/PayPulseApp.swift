@@ -43,20 +43,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         model.showSettings = { [weak self] in self?.showSettings() }
+        model.showDashboard = { [weak self] in self?.showDashboard() }
+        model.showTemporarySchedule = { [weak self] in self?.showSettings(tab: .schedule) }
         model.toggleFloating = { [weak self] in self?.toggleFloating() }
         model.onTick = { [weak self] in self?.updateStatus() }
+        model.onAppearanceChanged = { [weak self] in self?.updateFloatingAppearance() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.target = self
         statusItem.button?.action = #selector(toggleDashboard)
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         updateStatus()
         createAppMenu()
+        model.startNotifications()
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.refresh() }
+            MainActor.assumeIsolated { self?.model.refresh(); self?.model.refreshNotifications() }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSNotification.Name.NSSystemTimeZoneDidChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model.refresh() }
+            MainActor.assumeIsolated { self?.model.refresh(); self?.model.refreshNotifications() }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: NSNotification.Name.NSSystemClockDidChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.model.refresh(); self?.model.refreshNotifications() }
         })
         if model.preview { showPreview() }
         else if !model.configured { showSettings() }
@@ -71,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         let item = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "薪资与排班…", action: #selector(settingsAction), keyEquivalent: ",").target = self
+        appMenu.addItem(withTitle: "偏好设置…", action: #selector(settingsAction), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出薪跳", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = appMenu
@@ -108,16 +115,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showDashboard() {
         guard let screen = statusItem.button?.window?.screen ?? NSScreen.main else { return }
         model.refresh()
+        let controller = NSHostingController(rootView: AnyView(DashboardView(model: model).fixedSize(horizontal: false, vertical: true)))
+        let idealHeight = controller.view.fittingSize.height
+        let availableHeight = max(250, screen.visibleFrame.height - 64)
+        let height = min(idealHeight, availableHeight)
+        if idealHeight > availableHeight {
+            controller.rootView = AnyView(ScrollView {
+                DashboardView(model: model).fixedSize(horizontal: false, vertical: true)
+            }.frame(width: 400, height: height))
+        }
         if dashboardWindow == nil {
-            let controller = NSHostingController(rootView: AnyView(DashboardView(model: model).fixedSize(horizontal: false, vertical: true)))
-            let idealHeight = controller.view.fittingSize.height
-            let availableHeight = max(250, screen.visibleFrame.height - 64)
-            let height = min(idealHeight, availableHeight)
-            if idealHeight > availableHeight {
-                controller.rootView = AnyView(ScrollView {
-                    DashboardView(model: model).fixedSize(horizontal: false, vertical: true)
-                }.frame(width: 400, height: height))
-            }
             let window = SettingsWindow(contentViewController: controller)
             window.title = "薪跳 · 今日收入"
             window.styleMask = [.titled, .closable, .miniaturizable]
@@ -134,11 +141,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               y: visible.maxY - window.frame.height))
             }
             dashboardWindow = window
+        } else if let window = dashboardWindow {
+            let top = window.frame.maxY
+            window.contentViewController = controller
+            window.setContentSize(NSSize(width: 400, height: height))
+            window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
         }
         guard let window = dashboardWindow else { return }
+        let centerPoint = NSPoint(x: window.frame.midX, y: window.frame.midY)
+        let targetScreen = NSScreen.screens.first(where: { $0.visibleFrame.contains(centerPoint) }) ?? screen
+        let safeHeight = min(idealHeight, max(250, targetScreen.visibleFrame.height - 64))
+        if safeHeight != height {
+            if idealHeight > safeHeight {
+                controller.rootView = AnyView(ScrollView {
+                    DashboardView(model: model).fixedSize(horizontal: false, vertical: true)
+                }.frame(width: 400, height: safeHeight))
+            } else { controller.rootView = AnyView(DashboardView(model: model).fixedSize(horizontal: false, vertical: true)) }
+            let top = window.frame.maxY
+            window.setContentSize(NSSize(width: 400, height: safeHeight))
+            window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+        }
         // A monitor may have been disconnected since the last saved position.
         if !NSScreen.screens.contains(where: { $0.visibleFrame.contains(window.frame) }) {
-            let visible = screen.visibleFrame.insetBy(dx: 12, dy: 12)
+            let visible = targetScreen.visibleFrame.insetBy(dx: 12, dy: 12)
             var frame = window.frame
             frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
             frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
@@ -148,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func showSettings() {
+    private func showSettings(tab: SettingsTab = .salary) {
         dashboardWindow?.orderOut(nil)
         floatingPanel?.resignKey()
         if let window = settingsWindow, window.isVisible {
@@ -156,15 +181,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView(model: model, onSave: { [weak self] in
+        let height = min(700, max(420, (NSScreen.main?.visibleFrame.height ?? 800) - 70))
+        let view = SettingsView(model: model, height: height, tab: tab, onSave: { [weak self] in
             self?.settingsWindow?.close()
             self?.showDashboard()
         }, onCancel: { [weak self] in self?.settingsWindow?.close() })
         let window = SettingsWindow(contentViewController: NSHostingController(rootView: view))
-        window.title = "薪跳 · 薪资与排班"
+        window.title = "薪跳 · 偏好设置"
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 540, height: 740))
+        window.setContentSize(NSSize(width: 620, height: height))
         window.center()
         settingsWindow = window
         NSApp.activate(ignoringOtherApps: true)
@@ -182,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if floatingPanel == nil {
-            let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 310, height: 92), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: model.desktop.floating.width, height: model.desktop.floating.height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.contentView = NSHostingView(rootView: FloatingView(model: model))
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -194,24 +220,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.contentView?.wantsLayer = true
             panel.contentView?.layer?.cornerRadius = 16
             panel.contentView?.layer?.masksToBounds = true
-            if let screen = NSScreen.main {
-                panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - 334, y: screen.visibleFrame.maxY - 130))
+            let name = model.preview ? "PayPulse.Preview.Floating" : "PayPulse.Floating"
+            let restored = panel.setFrameUsingName(name)
+            panel.setFrameAutosaveName(name)
+            if !restored, let screen = NSScreen.main {
+                panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.maxX - panel.frame.width - 24, y: screen.visibleFrame.maxY - panel.frame.height - 28))
             }
             floatingPanel = panel
         }
+        updateFloatingAppearance()
         floatingPanel?.orderFrontRegardless()
         model.floatingVisible = true
         dashboardWindow?.orderOut(nil)
     }
 
+    private func updateFloatingAppearance() {
+        guard let panel = floatingPanel else { return }
+        let top = panel.frame.maxY
+        panel.setContentSize(NSSize(width: model.desktop.floating.width, height: model.desktop.floating.height))
+        panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: top - panel.frame.height))
+        guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(panel.frame) }) ?? NSScreen.main else { return }
+        let area = screen.visibleFrame.insetBy(dx: 8, dy: 8)
+        var frame = panel.frame
+        frame.origin.x = min(max(frame.minX, area.minX), area.maxX - frame.width)
+        frame.origin.y = min(max(frame.minY, area.minY), area.maxY - frame.height)
+        panel.setFrame(frame, display: true)
+    }
+
     private func showPreview() {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: DashboardView(model: model)))
+        let args = ProcessInfo.processInfo.arguments
+        let index = args.firstIndex(of: "--preview-view")
+        let scene = index.flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } ?? "dashboard"
+        let heightIndex = args.firstIndex(of: "--preview-height")
+        let height = heightIndex.flatMap { args.indices.contains($0 + 1) ? Double(args[$0 + 1]) : nil } ?? 700
+        let tabs: [String: SettingsTab] = ["salary": .salary, "appearance": .appearance, "goals": .goals, "schedule": .schedule]
+        if !args.contains("--export-preview"), let tab = tabs[scene] { showSettings(tab: tab); return }
+        if !args.contains("--export-preview"), scene == "floating" { toggleFloating(); return }
+        let root: AnyView
+        if let tab = tabs[scene] {
+            root = AnyView(SettingsView(model: model, height: min(900, max(420, height)), tab: tab, onSave: {}, onCancel: {}))
+        } else if scene == "floating" || scene == "floating-dark" {
+            var appearance = model.desktop.floating
+            if scene == "floating-dark" { appearance.appearance = .dark; appearance.size = .large }
+            root = AnyView(FloatingWidget(preferences: appearance, amount: "¥ \(model.amount(model.snapshot.todayEarned))",
+                                          state: model.snapshot.state, countdownLabel: model.snapshot.nextEventLabel, countdown: model.countdown))
+        } else {
+            root = AnyView(DashboardView(model: model))
+        }
+        let window = NSWindow(contentViewController: NSHostingController(rootView: root))
         window.title = "薪跳 · 演示"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.center()
         previewWindow = window
-        let args = ProcessInfo.processInfo.arguments
         if let index = args.firstIndex(of: "--export-preview"), args.indices.contains(index + 1) {
             let path = args[index + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {

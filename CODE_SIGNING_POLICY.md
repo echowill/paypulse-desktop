@@ -4,7 +4,7 @@ PayPulse Desktop (薪跳) is maintained at [echowill/paypulse-desktop](https://g
 
 ## Current status
 
-We are preparing an application for free code signing through [SignPath Foundation](https://signpath.org/). The application has not been approved, signing is not configured, and the current Windows releases are unsigned. This policy does not claim that any existing release has a SignPath signature.
+The free code signing application to [SignPath Foundation](https://signpath.org/) was not approved. Signing work is on hold as of 2026-10-23, signing is not configured, and the current Windows releases are unsigned. This policy does not claim that any existing release has a SignPath signature. The process below is a plan for a possible future application, not an active signing service.
 
 If the application is approved and signing becomes available, signed releases will carry this attribution:
 
