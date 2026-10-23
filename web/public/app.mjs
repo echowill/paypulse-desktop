@@ -1,5 +1,5 @@
 import { defaults, clone, timeString, dayKey, startOfDay, dateFromKey, hours, paidMinutes, workHours,
-  validateHours, validateSalary, validateDesktop, snapshot, goalProgress, nextPayday, reminderPlans, stateTitles, countdown } from './engine.mjs';
+  validateHours, validateSalary, validateDesktop, snapshot, goalProgress, nextPayday, reminderPlans, stateTitles, countdown } from './engine.mjs?v=1.0.1';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE = 'paypulse.web.v1';
@@ -138,7 +138,7 @@ async function togglePip() {
     // Request immediately inside the real click; Chrome requires user activation.
     const win = await window.documentPictureInPicture.requestWindow({ width, height });
     pipWindow = win; win.document.title = '薪跳 · 桌面小窗'; win.document.documentElement.lang = 'zh-CN';
-    const css = win.document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./styles.css', location.href).href; win.document.head.append(css);
+    const css = win.document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./styles.css?v=1.0.1', location.href).href; win.document.head.append(css);
     win.document.body.className = 'pip-body'; win.document.body.append(widget); $('widget-away').hidden = false;
     win.addEventListener('pagehide', () => {
       if (widget.ownerDocument === win.document) widgetHome.prepend(widget);
@@ -203,11 +203,22 @@ function updateForm() {
   $('break-fields').hidden = !s.breakEnabled; $('overnight-note').hidden = !(s.endMinute < s.startMinute);
   $('fixed-days-row').hidden = s.basis !== 'fixed'; $('preview-denominator-row').hidden = s.basis !== 'fixed';
   text('basis-explanation', s.basis === 'calendar' ? '月薪 ÷ 本月实际排班工时。临时安排也计入分母，完整排班月的预估收入等于月薪。' : '折算天数只影响时薪，不改变实际排班。分母使用常规班计薪时长；临时班次按实际时长累计，月累计可能与月薪不同。');
-  const sample = clone(s); if (!(sample.monthlySalary > 0)) sample.monthlySalary = 1;
-  const valid = !validateSalary(sample), current = snapshot(new Date(), sample);
-  text('preview-schedule', valid ? `${current.monthWorkdays} 天 · ${number(current.monthScheduledSeconds / 3600)} 小时` : '检查时间和排班后计算');
-  text('preview-denominator', `${Number.isFinite(s.fixedDays) ? s.fixedDays : '—'} 天 × ${Number.isFinite(paidMinutes(s)) ? number(paidMinutes(s) / 60) : '—'} 小时 / 天`);
-  text('preview-rate', !validateSalary(s) ? `¥ ${number(snapshot(new Date(), s).hourlyRate)} / 小时` : '填写后计算');
+  // Actual scheduled time is independent of salary and the chosen pay divisor.
+  const schedule = { ...clone(s), monthlySalary: 1, basis: 'calendar', fixedDays: 21.75 };
+  const now = new Date(), scheduleValid = !validateSalary(schedule), actual = snapshot(now, schedule);
+  text('preview-schedule', scheduleValid ? `${actual.monthWorkdays} 天 · ${number(actual.monthScheduledSeconds / 3600)} 小时` : '填写完整的工作日与时段后计算');
+  const divisorSettings = { ...clone(s), monthlySalary: 1 };
+  const divisorValid = !validateSalary(divisorSettings), divisor = snapshot(now, divisorSettings);
+  const divisorHours = divisor.rateDenominatorSeconds / 3600;
+  const salaryValid = !validateSalary(s), current = snapshot(now, s);
+  text('preview-hours-label', s.basis === 'calendar' ? '本月排班计薪工时' : '固定折算计薪工时');
+  text('preview-pay-hours', divisorValid ? `${number(divisorHours)} 小时` : '填写后计算');
+  text('preview-denominator', divisorValid ? `${number(s.fixedDays)} 天 × ${number(paidMinutes(s) / 60)} 小时 / 天` : '填写后计算');
+  text('preview-salary', Number.isFinite(s.monthlySalary) && s.monthlySalary > 0 ? `¥ ${number(s.monthlySalary)}` : '填写后计算');
+  text('preview-rate', salaryValid && divisorHours > 0 ? `¥ ${number(current.hourlyRate)} / 小时` : '暂无法折算');
+  text('preview-formula', salaryValid && divisorHours > 0
+    ? `¥ ${number(s.monthlySalary)} ÷ ${number(divisorHours)} 小时 = ¥ ${number(current.hourlyRate)} / 小时`
+    : divisorValid && divisorHours === 0 ? '本月未安排计薪工时，请调整排班后计算时薪。' : '填写月薪和排班后，这里会实时显示计算公式。');
   $('goal-fields').hidden = !d.goal.enabled; $('offwork-fields').hidden = !d.reminders.offWorkEnabled;
   $('payday-fields').hidden = !d.reminders.paydayEnabled; $('payday-time-row').hidden = !d.reminders.paydayNotification;
   const status = !('Notification' in window) ? '当前浏览器无法发送系统通知。' : Notification.permission === 'granted' ? '浏览器通知已允许，通知中不显示工资金额。' : Notification.permission === 'denied' ? '浏览器通知未获允许。可在地址栏的网站设置中开启，再保存。' : '开启提醒并保存后，将申请浏览器通知权限。';

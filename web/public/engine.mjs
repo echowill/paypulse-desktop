@@ -98,7 +98,7 @@ export function plannedShifts(start, end, s) {
 const overlap = (interval, start, end) => Math.max(0, Math.min(interval[1], +end) - Math.max(interval[0], +start)) / 1000;
 export function snapshot(now, s) {
   const empty = { todayEarned: 0, monthEarned: 0, dailyTarget: 0, hourlyRate: 0, secondRate: 0, earnedSeconds: 0,
-    plannedSeconds: 0, monthScheduledSeconds: 0, monthWorkdays: 0, progress: 0, state: 'unconfigured', nextEvent: null, nextEventLabel: '', scheduleLabel: '等待你的排班' };
+    plannedSeconds: 0, monthScheduledSeconds: 0, rateDenominatorSeconds: 0, monthWorkdays: 0, progress: 0, state: 'unconfigured', nextEvent: null, nextEventLabel: '', scheduleLabel: '等待你的排班' };
   if (validateSalary(s)) return empty;
   const today = startOfDay(now), tomorrow = addDays(today, 1);
   const month = new Date(now.getFullYear(), now.getMonth(), 1), nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -113,7 +113,7 @@ export function snapshot(now, s) {
   for (let d = new Date(month); d < nextMonth; d = addDays(d, 1)) if (workHours(d, s)) monthWorkdays++;
   const result = { ...empty, todayEarned: earnedSeconds * rate, monthEarned: monthly.reduce((n, p) => n + overlap(p, month, now), 0) * rate,
     dailyTarget: plannedSeconds * rate, hourlyRate: rate * 3600, secondRate: rate, earnedSeconds, plannedSeconds,
-    monthScheduledSeconds: monthSeconds, monthWorkdays, progress: plannedSeconds > 0 ? Math.min(1, earnedSeconds / plannedSeconds) : 0 };
+    monthScheduledSeconds: monthSeconds, rateDenominatorSeconds: denominator, monthWorkdays, progress: plannedSeconds > 0 ? Math.min(1, earnedSeconds / plannedSeconds) : 0 };
   const active = daily.find((v) => +now >= v.start && +now < v.end);
   const next = daily.find((v) => v.start > +now && v.start < +tomorrow);
   if (active) {

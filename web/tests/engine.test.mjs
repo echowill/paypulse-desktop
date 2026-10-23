@@ -39,6 +39,31 @@ test('paid lunch and custom weekdays', () => {
   assert.equal(snap('2026-10-24 18:00:00', s).earnedSeconds, 9 * 3600);
   assert.equal(snap('2026-10-21 12:30:00', s).state, 'dayOff');
 });
+test('salary and fixed days change the hourly divisor, while workday and time edits change actual schedule totals', () => {
+  const s = { ...settings(), monthlySalary: 18000, startMinute: 510, endMinute: 1050, breakEndMinute: 810 };
+  let current = snap('2026-10-21 15:00:00', s);
+  assert.equal(current.monthWorkdays, 22);
+  near(current.monthScheduledSeconds / 3600, 165);
+  near(current.rateDenominatorSeconds / 3600, 165);
+  near(current.hourlyRate, 18000 / 165);
+  s.monthlySalary = 36000;
+  current = snap('2026-10-21 15:00:00', s);
+  near(current.hourlyRate, 36000 / 165);
+  assert.equal(current.monthWorkdays, 22); near(current.monthScheduledSeconds / 3600, 165);
+  s.basis = 'fixed'; s.fixedDays = 20;
+  current = snap('2026-10-21 15:00:00', s);
+  near(current.rateDenominatorSeconds / 3600, 150); near(current.hourlyRate, 240);
+  assert.equal(current.monthWorkdays, 22); near(current.monthScheduledSeconds / 3600, 165);
+  s.fixedDays = 15;
+  current = snap('2026-10-21 15:00:00', s);
+  near(current.rateDenominatorSeconds / 3600, 112.5); near(current.hourlyRate, 320);
+  s.endMinute = 1110;
+  current = snap('2026-10-21 15:00:00', s);
+  near(current.monthScheduledSeconds / 3600, 187); near(current.rateDenominatorSeconds / 3600, 127.5);
+  s.weekdays = [2, 3, 4, 5];
+  current = snap('2026-10-21 15:00:00', s);
+  assert.equal(current.monthWorkdays, 17); near(current.monthScheduledSeconds / 3600, 144.5);
+});
 test('overnight shifts are split by natural day, using the start weekday', () => {
   const s = { ...settings(), startMinute: 1320, endMinute: 360, breakStartMinute: 120, breakEndMinute: 180 };
   assert.equal(validateSalary(s), '');
