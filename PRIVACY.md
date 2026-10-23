@@ -2,6 +2,8 @@
 
 Applies to the PayPulse Desktop (薪跳) Windows and macOS applications. Last updated: 2026-10-23.
 
+For the Chrome web edition, salary, schedules and preferences are stored in the current browser's local storage and are not uploaded. The website requests static application files from Sites; the hosting platform may process normal request information such as IP addresses. The application does not put salary or schedule data in requests or URLs. See the [web documentation](web/README.md) for web storage and notification behavior.
+
 ## Data stays on your device
 
 PayPulse uses the monthly salary, work schedule (including date-specific changes on Mac), goals, and display preferences you enter to estimate earnings. It has no user accounts, advertising, analytics, telemetry, automatic update checks, or network requests. It does not read your other files, monitor your computer activity, or send application data to another system.

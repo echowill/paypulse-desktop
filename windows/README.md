@@ -1,5 +1,7 @@
 # 薪跳 Windows 11 版
 
+**停止维护**：本目录保留 1.0.3 历史源码和构建说明。后续功能与修复集中在 Mac 和 [Chrome 网页版](https://paypulse-echowill.decenthill26.chatgpt.site)，Windows 用户建议打开网页版使用置顶小窗。
+
 原生 Win32 + GDI+，C++17。免安装、无网络请求，不需要安装 .NET、Java、Python 或 Visual C++ 运行库。
 
 ## 使用

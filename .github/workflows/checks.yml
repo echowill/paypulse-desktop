@@ -1,0 +1,40 @@
+name: Mac and web checks
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the calendar engine and compile the Mac app
+        working-directory: macos
+        run: |
+          swift run SalaryEngineChecks
+          swift build -c release
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript and calendar calculations
+        run: |
+          node --check web/public/app.mjs
+          npm test --prefix web
+      - name: Build the static website
+        run: npm run build --prefix web
+      - name: Save the static website build
+        uses: actions/upload-artifact@v4
+        with:
+          name: paypulse-web
+          path: web/dist

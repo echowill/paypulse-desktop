@@ -1,17 +1,19 @@
 # 薪跳 PayPulse
 
-输入月薪和工作时段，看着今天的收入逐秒增长。原生 macOS 菜单栏应用，以及原生 Windows 桌面小工具。
+输入月薪和工作时段，看着今天的收入逐秒增长。持续维护 Mac 原生应用和 Chrome 网页版；Windows 原生版保留历史下载，停止后续维护。
 
 <img src="docs/mac-preview.png" width="400" alt="薪跳 Mac 版，使用演示数据" />
 
 ## 下载
+
+**[打开 Chrome 网页版 →](https://paypulse-echowill.decenthill26.chatgpt.site)** 无需安装，支持跨应用置顶小窗；工资只在当前浏览器本地保存，详见 [`web/`](web/)。
 
 请到 [GitHub Releases](https://github.com/echowill/paypulse-desktop/releases/latest) 下载。
 
 | 平台 | 文件 | 使用 |
 | --- | --- | --- |
 | macOS 13+，Apple Silicon / Intel | `PayPulse-macOS-Universal.zip` | 解压，双击「薪跳.app」，可移入「应用程序」 |
-| Windows 11 x64，Intel / AMD | `PayPulse-Windows11-x64.zip` | 解压，双击 `PayPulse.exe`，免安装 |
+| Windows 历史版 1.0.3（停止维护） | `PayPulse-Windows11-x64.zip` | 解压，双击 `PayPulse.exe`；新用户建议使用 Chrome 网页版 |
 
 两个版本都没有商业开发者签名；Mac 使用本地临时签名。下载来源和 SHA-256 可与 Release 附件核对。无需关闭系统安全保护。
 
@@ -36,7 +38,7 @@ Mac 菜单栏直接显示收入。Windows 托盘图标悬停显示收入，点�
 - 可选下班提醒、发薪日倒计时和当天提醒。系统提醒默认关闭，首次开启需要通知权限；短月发薪日取月末，不自动顺延周末。
 - 按日期临时修改上下班、休息时段或改为休息，支持恢复常规排班；跨夜班次仍归上班日期，拒绝相邻班次时间重叠。
 
-这些新增功能目前仅在 Mac 提供；Windows 保持 1.0.3。
+这些新增功能也已提供 Chrome 网页版；Windows 桌面版停留在 1.0.3，不再维护。
 
 <img src="docs/mac-settings-appearance.png" width="520" alt="Mac 浮窗外观设置，使用演示数据" />
 
@@ -53,10 +55,11 @@ Mac 菜单栏直接显示收入。Windows 托盘图标悬停显示收入，点�
 ## 源码与构建
 
 - [`macos/`](macos/)：Swift + SwiftUI + AppKit，Universal 应用，无第三方依赖。运行 `swift run SalaryEngineChecks` 验证计薪逻辑，`./build.sh /absolute/output/path` 打包。
-- [`windows/`](windows/)：C++17 + Win32 + GDI+，静态链接编译器运行库。支持 MinGW-w64 或 Visual Studio 2022 / MSVC 构建，详见该目录说明。
+- [`web/`](web/)：无框架静态网页，Chrome 原生画中画小窗，浏览器本地保存；Sites 提供公开网址，GitHub Actions 检查静态构建。
+- [`windows/`](windows/)：停止维护的历史 C++17 + Win32 + GDI+ 源码，保留原有构建方式。
 - [`docs/product-research.zh-CN.md`](docs/product-research.zh-CN.md)：同类产品调研。
 
-Mac 版经过本机运行和界面检查；Windows 提供交叉编译二进制，并由 GitHub Actions 执行 Windows 构建、计薪检查与原生窗口启动检查。CI 不代替人工视觉验收。
+Mac 版经过本机运行和界面检查；网页版在真实桌面 Chrome 验证置顶小窗。GitHub Actions 持续检查 Mac 与网页计薪核心及构建；Windows 1.0.3 保留此前检查记录，不再运行后续维护工作流。CI 不代替人工视觉验收。
 
 ## 数据
 
