@@ -90,6 +90,7 @@ extension SalaryEngine {
                              snapshot supplied: EarningsSnapshot? = nil) -> DailyGoalProgress? {
         guard goal.enabled, goal.amount.isFinite, goal.amount > 0, settings.validationError == nil else { return nil }
         let snapshot = supplied ?? self.snapshot(at: now, settings: settings)
+        if snapshot.state == .calendarUnavailable { return nil }
         let remaining = max(0, goal.amount - snapshot.todayEarned)
         let fraction = min(1, max(0, snapshot.todayEarned / goal.amount))
         if remaining <= 0.0000001 { return DailyGoalProgress(fraction: 1, remainingAmount: 0, remainingWorkSeconds: 0, completionDate: now) }
@@ -143,6 +144,7 @@ public struct ReminderPlanner {
         if preferences.offWorkEnabled {
             let end = calendar.date(byAdding: .day, value: 32, to: calendar.startOfDay(for: now))!
             for shift in SalaryEngine(calendar: calendar).plannedShifts(from: now, to: end, settings: settings) {
+                if shift.paidHoliday { continue }
                 let date = shift.full.end.addingTimeInterval(-Double(preferences.leadMinutes) * 60)
                 if date > now, date >= shift.full.start {
                     result.append(LocalReminder(id: "paypulse.offWork.\(LocalDay.key(for: shift.workDate, calendar: calendar))", date: date, kind: .offWork))

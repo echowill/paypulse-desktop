@@ -37,6 +37,7 @@ final class AppModel: ObservableObject {
         if preview {
             var sample = SalarySettings()
             sample.monthlySalary = 18_000
+            if ProcessInfo.processInfo.arguments.contains("--preview-china") { sample.basis = .china }
             settings = sample
             var options = DesktopPreferences()
             options.goal.enabled = true; options.goal.amount = 600; options.goal.name = "今日小目标"
@@ -61,7 +62,7 @@ final class AppModel: ObservableObject {
     }
 
     var configured: Bool { settings.validationError == nil }
-    var versionLabel: String { "v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.0")" }
+    var versionLabel: String { "v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0")" }
     private static func loadDesktop(defaults: UserDefaults) -> DesktopPreferences {
         guard let data = defaults.data(forKey: "desktopPreferences.v1"),
               let value = try? JSONDecoder().decode(DesktopPreferences.self, from: data),
@@ -83,7 +84,7 @@ final class AppModel: ObservableObject {
         if preview {
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = .current
-            let anchor = calendar.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: 15, minute: 26, second: 18))!
+            let anchor = calendar.date(from: DateComponents(year: 2026, month: 10, day: ProcessInfo.processInfo.arguments.contains("--preview-holiday") ? 1 : 21, hour: 15, minute: 26, second: 18))!
             now = anchor.addingTimeInterval(Date().timeIntervalSince(previewStarted))
         } else { now = Date() }
         snapshot = SalaryEngine().snapshot(at: now, settings: settings)

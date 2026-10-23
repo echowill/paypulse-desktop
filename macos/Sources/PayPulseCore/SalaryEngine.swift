@@ -1,7 +1,7 @@
 import Foundation
 
 public enum PayBasis: String, Codable, CaseIterable {
-    case calendar, fixed
+    case calendar, fixed, china
 }
 
 public struct WorkHours: Codable, Equatable {
@@ -132,7 +132,7 @@ public struct SalarySettings: Codable, Equatable {
             return "请输入大于 0、不超过 1 亿的月薪。"
         }
         if let error = hours.validationError { return error }
-        guard !weekdays.isEmpty, weekdays.allSatisfy({ (1...7).contains($0) }) else {
+        guard (basis == .china || !weekdays.isEmpty), weekdays.allSatisfy({ (1...7).contains($0) }) else {
             return "请至少选择一个工作日。"
         }
         if basis == .fixed {
@@ -151,7 +151,7 @@ public struct SalarySettings: Codable, Equatable {
         for key in adjacentDays.sorted() {
             guard let day = LocalDay.date(for: key, calendar: utc) else { continue }
             let next = utc.date(byAdding: .day, value: 1, to: day)!
-            if let a = workHours(on: day, calendar: utc), let b = workHours(on: next, calendar: utc),
+            if let a = payHours(on: day, calendar: utc), let b = payHours(on: next, calendar: utc),
                a.startMinute + a.shiftMinutes > 1440 + b.startMinute {
                 return "\(key) 的跨夜排班与次日重叠，请调整上下班时间。"
             }
@@ -162,7 +162,19 @@ public struct SalarySettings: Codable, Equatable {
         if let override = dayOverrides[LocalDay.key(for: day, calendar: calendar)] {
             return override.isWorkingDay ? override.hours : nil
         }
+        if basis == .china {
+            guard ChinaCalendar.contains(day, calendar: calendar) else { return nil }
+            if let special = ChinaCalendar.day(day, calendar: calendar) { return special.kind == "work" ? hours : nil }
+            return (2...6).contains(calendar.component(.weekday, from: day)) ? hours : nil
+        }
         return weekdays.contains(calendar.component(.weekday, from: day)) ? hours : nil
+    }
+    public func isPaidHoliday(on day: Date, calendar: Calendar = .autoupdatingCurrent) -> Bool {
+        basis == .china && dayOverrides[LocalDay.key(for: day, calendar: calendar)] == nil
+            && ChinaCalendar.day(day, calendar: calendar)?.kind == "statutory"
+    }
+    public func payHours(on day: Date, calendar: Calendar = .autoupdatingCurrent) -> WorkHours? {
+        isPaidHoliday(on: day, calendar: calendar) ? hours : workHours(on: day, calendar: calendar)
     }
     public static func timeString(_ minute: Int) -> String {
         String(format: "%02d:%02d", minute / 60, minute % 60)
@@ -170,13 +182,15 @@ public struct SalarySettings: Codable, Equatable {
 }
 
 public enum WorkState: String {
-    case working, onBreak, waiting, finished, dayOff, unconfigured
+    case working, paidHoliday, calendarUnavailable, onBreak, waiting, finished, dayOff, unconfigured
     public var title: String {
         switch self {
         case .working: return "正在计薪"
+        case .paidHoliday: return "带薪休假"
+        case .calendarUnavailable: return "日历待更新"
         case .onBreak: return "休息时间"
-        case .waiting: return "等待上班"
-        case .finished: return "已下班"
+        case .waiting: return "等待计时"
+        case .finished: return "今日计薪结束"
         case .dayOff: return "今日休息"
         case .unconfigured: return "尚未设置"
         }
@@ -191,7 +205,11 @@ public struct EarningsSnapshot {
     public var earnedSeconds: TimeInterval = 0
     public var plannedSeconds: TimeInterval = 0
     public var monthScheduledSeconds: TimeInterval = 0
+    public var monthPaidSeconds: TimeInterval = 0
+    public var rateDenominatorSeconds: TimeInterval = 0
     public var monthWorkdays: Int = 0
+    public var monthPaidHolidays: Int = 0
+    public var monthPayDays: Int { monthWorkdays + monthPaidHolidays }
     public var state: WorkState = .unconfigured
     public var nextEvent: Date?
     public var nextEventLabel: String = ""
@@ -204,6 +222,7 @@ public struct ScheduledShift {
     public var workDate: Date
     public var full: DateInterval
     public var paid: [DateInterval]
+    public var paidHoliday: Bool
 }
 
 /// Rebuilds earnings from calendar intervals, never by adding timer ticks.
@@ -222,7 +241,8 @@ public struct SalaryEngine {
     }
 
     private func shift(on day: Date, settings s: SalarySettings) -> ScheduledShift? {
-        guard let hours = s.workHours(on: day, calendar: calendar) else { return nil }
+        guard let hours = s.payHours(on: day, calendar: calendar) else { return nil }
+        let paidHoliday = s.isPaidHoliday(on: day, calendar: calendar)
         let start = time(hours.startMinute, on: day)
         let end = time(hours.startMinute + hours.shiftMinutes, on: day)
         guard end > start else { return nil }
@@ -232,9 +252,9 @@ public struct SalaryEngine {
             let bEnd = time(hours.startMinute + b.end, on: day)
             let intervals = [(start, min(bStart, end)), (max(bEnd, start), end)]
                 .filter { $0.1 > $0.0 }.map { DateInterval(start: $0.0, end: $0.1) }
-            return ScheduledShift(workDate: day, full: DateInterval(start: start, end: end), paid: intervals)
+            return ScheduledShift(workDate: day, full: DateInterval(start: start, end: end), paid: intervals, paidHoliday: paidHoliday)
         }
-        return ScheduledShift(workDate: day, full: DateInterval(start: start, end: end), paid: [DateInterval(start: start, end: end)])
+        return ScheduledShift(workDate: day, full: DateInterval(start: start, end: end), paid: [DateInterval(start: start, end: end)], paidHoliday: paidHoliday)
     }
 
     private func overlap(_ interval: DateInterval, from start: Date, to end: Date) -> TimeInterval {
@@ -257,6 +277,9 @@ public struct SalaryEngine {
     }
 
     public func dailyScheduleLabel(at now: Date, settings: SalarySettings) -> String {
+        if settings.basis == .china, !ChinaCalendar.contains(now, calendar: calendar) {
+            return ChinaCalendar.status(at: now, calendar: calendar)
+        }
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
         let relevant = plannedShifts(from: today, to: tomorrow, settings: settings)
@@ -264,7 +287,8 @@ public struct SalaryEngine {
         return relevant.map { shift in
             let start = calendar.dateComponents([.hour, .minute], from: shift.full.start)
             let end = calendar.dateComponents([.hour, .minute], from: shift.full.end)
-            let prefix = shift.full.start < today ? "昨 " : ""
+            let holiday = shift.paidHoliday ? "\(ChinaCalendar.day(shift.workDate, calendar: calendar)?.name ?? "法定节日") · 带薪休假 " : ""
+            let prefix = holiday + (shift.full.start < today ? "昨 " : "")
             let suffix = shift.full.end >= tomorrow ? " 次日" : ""
             return "\(prefix)\(SalarySettings.timeString(start.hour! * 60 + start.minute!)) — \(SalarySettings.timeString(end.hour! * 60 + end.minute!))\(suffix)"
         }.joined(separator: " · ")
@@ -272,13 +296,16 @@ public struct SalaryEngine {
 
     public func snapshot(at now: Date, settings s: SalarySettings) -> EarningsSnapshot {
         guard s.validationError == nil else { return EarningsSnapshot() }
+        if s.basis == .china, !ChinaCalendar.contains(now, calendar: calendar) {
+            var unavailable = EarningsSnapshot(); unavailable.state = .calendarUnavailable; return unavailable
+        }
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
         let month = calendar.dateInterval(of: .month, for: now)!
         let monthlyShifts = shifts(from: month.start, to: month.end, settings: s)
         let monthlyPaid = monthlyShifts.flatMap(\.paid)
         let monthSeconds = monthlyPaid.reduce(0) { $0 + overlap($1, from: month.start, to: month.end) }
-        let denominator = s.basis == .calendar ? monthSeconds : s.fixedDays * Double(s.paidMinutes) * 60
+        let denominator = s.basis == .fixed ? s.fixedDays * Double(s.paidMinutes) * 60 : monthSeconds
         let rate = denominator > 0 ? s.monthlySalary / denominator : 0
         let dailyShifts = shifts(from: today, to: tomorrow, settings: s)
         let dailyPaid = dailyShifts.flatMap(\.paid)
@@ -289,17 +316,21 @@ public struct SalaryEngine {
         result.todayEarned = result.earnedSeconds * rate
         result.dailyTarget = result.plannedSeconds * rate
         result.monthEarned = monthlyPaid.reduce(0) { $0 + overlap($1, from: month.start, to: now) } * rate
-        result.monthScheduledSeconds = monthSeconds
+        result.monthScheduledSeconds = monthlyShifts.filter { !$0.paidHoliday }.flatMap(\.paid)
+            .reduce(0) { $0 + overlap($1, from: month.start, to: month.end) }
+        result.monthPaidSeconds = monthSeconds
+        result.rateDenominatorSeconds = denominator
         var day = month.start
         while day < month.end {
             if s.workHours(on: day, calendar: calendar) != nil { result.monthWorkdays += 1 }
+            if s.isPaidHoliday(on: day, calendar: calendar) { result.monthPaidHolidays += 1 }
             day = calendar.date(byAdding: .day, value: 1, to: day)!
         }
         if let active = dailyShifts.first(where: { now >= $0.full.start && now < $0.full.end }) {
             if active.paid.contains(where: { now >= $0.start && now < $0.end }) {
-                result.state = .working
+                result.state = active.paidHoliday ? .paidHoliday : .working
                 result.nextEvent = active.full.end
-                result.nextEventLabel = "距离下班"
+                result.nextEventLabel = active.paidHoliday ? "本段计薪结束" : "距离下班"
             } else {
                 result.state = .onBreak
                 result.nextEvent = active.paid.first(where: { $0.start > now })?.start
@@ -308,7 +339,7 @@ public struct SalaryEngine {
         } else if let next = dailyShifts.first(where: { $0.full.start > now && $0.full.start < tomorrow }) {
             result.state = .waiting
             result.nextEvent = next.full.start
-            result.nextEventLabel = "距离上班"
+            result.nextEventLabel = next.paidHoliday ? "带薪计时开始" : "距离上班"
         } else {
             result.state = result.plannedSeconds > 0 ? .finished : .dayOff
         }

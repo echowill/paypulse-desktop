@@ -1,5 +1,5 @@
-import { defaults, clone, timeString, dayKey, startOfDay, dateFromKey, hours, paidMinutes, workHours,
-  validateHours, validateSalary, validateDesktop, snapshot, goalProgress, nextPayday, reminderPlans, stateTitles, countdown } from './engine.mjs?v=1.0.1';
+import { defaults, clone, timeString, dayKey, startOfDay, dateFromKey, hours, paidMinutes, workHours, isPaidHoliday, chinaDay, hasChinaCalendar, chinaCalendarYears,
+  validateHours, validateSalary, validateDesktop, snapshot, goalProgress, nextPayday, reminderPlans, stateTitles, countdown } from './engine.mjs?v=1.1.0';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE = 'paypulse.web.v1';
@@ -94,19 +94,21 @@ function update() {
   text('today-amount', money(current.todayEarned, state.salary.showFourDecimals ? 4 : 2));
   $('today-amount').parentElement.classList.toggle('four-decimals', state.salary.showFourDecimals);
   text('work-state', stateTitles[current.state]); $('state-badge').dataset.state = current.state;
-  const messages = { working: `+ ¥${money(current.secondRate, 4)} / 秒，时间正在变成收入`, onBreak: '休息也很重要，结束后自动继续计薪。',
-    waiting: '上班时间一到，金额就会自动增长。', finished: '今天的努力已经记下，接下来是你的时间。', dayOff: '今天没有排班，把时间留给生活。', unconfigured: '设置月薪后，工作时段会自动计薪。' };
+  const messages = { working: `+ ¥${money(current.secondRate, 4)} / 秒，时间正在变成收入`, paidHoliday: '法定带薪节日，按常规时段分摊收入，安心休假。', calendarUnavailable: '本年日历尚未收录，请在设置中切换为实际排班或固定折算天数。', onBreak: '休息时间暂停累计，结束后自动继续计薪。',
+    waiting: current.nextEventLabel === '带薪计时开始' ? '今天是法定带薪节日，常规时段内会自动累计收入。' : '上班时间一到，金额就会自动增长。', finished: '今天的收入已经记下，接下来是你的时间。', dayOff: '今天没有排班，把时间留给生活。', unconfigured: '设置月薪后，工作时段会自动计薪。' };
   text('earning-message', messages[current.state]);
   const pct = Math.floor(current.progress * 100);
   $('day-progress-fill').style.width = `${current.progress * 100}%`;
   $('day-progress-fill').parentElement.setAttribute('aria-valuenow', String(pct));
   text('day-progress-label', `今日进度 ${pct}%`); text('daily-target', `¥${money(current.dailyTarget)}`);
   text('hourly-rate', `¥${money(current.hourlyRate)}`); text('countdown-label', current.nextEventLabel || stateTitles[current.state]);
-  text('countdown', countdownValue(now, current)); text('countdown-hint', current.nextEvent ? '按当天实际排班自动计薪' : '今天也有自己的节奏');
+  text('countdown', countdownValue(now, current)); text('countdown-hint', current.state === 'paidHoliday' ? '按常规时段累计带薪收入' : current.nextEvent ? '按当天实际排班自动计薪' : '今天也有自己的节奏');
   text('month-amount', `¥${money(current.monthEarned)}`);
   text('month-schedule', configured ? `${current.monthWorkdays} 天 · ${number(current.monthScheduledSeconds / 3600)} 小时` : '填写后计算');
+  $('month-pay-summary').hidden = state.salary.basis !== 'china';
+  text('month-pay-summary', current.state === 'calendarUnavailable' ? messages.calendarUnavailable : `${current.monthWorkdays} 个工作日 + ${current.monthPaidHolidays} 个带薪节日 = ${current.monthPayDays} 个计薪日 · ${number(current.monthPaidSeconds / 3600)} 小时`);
   text('today-schedule', current.scheduleLabel);
-  text('basis-label', state.salary.basis === 'calendar' ? '时薪按本月实际排班工时折算' : `时薪折算：${number(state.salary.fixedDays)} 天 / 月 × 常规班计薪时长`);
+  text('basis-label', state.salary.basis === 'china' ? '中国大陆计薪日历 · 按当月计薪时长分摊月薪' : state.salary.basis === 'calendar' ? '时薪按本月实际排班工时折算' : `时薪折算：${number(state.salary.fixedDays)} 天 / 月 × 常规班计薪时长`);
   $('payday-row').hidden = !state.desktop.reminders.paydayEnabled;
   if (state.desktop.reminders.paydayEnabled) {
     const date = nextPayday(startOfDay(now), state.desktop.reminders.paydayDay, state.desktop.reminders.paydayMinute);
@@ -138,7 +140,7 @@ async function togglePip() {
     // Request immediately inside the real click; Chrome requires user activation.
     const win = await window.documentPictureInPicture.requestWindow({ width, height });
     pipWindow = win; win.document.title = '薪跳 · 桌面小窗'; win.document.documentElement.lang = 'zh-CN';
-    const css = win.document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./styles.css?v=1.0.1', location.href).href; win.document.head.append(css);
+    const css = win.document.createElement('link'); css.rel = 'stylesheet'; css.href = new URL('./styles.css?v=1.1.0', location.href).href; win.document.head.append(css);
     win.document.body.className = 'pip-body'; win.document.body.append(widget); $('widget-away').hidden = false;
     win.addEventListener('pagehide', () => {
       if (widget.ownerDocument === win.document) widgetHome.prepend(widget);
@@ -187,7 +189,7 @@ function readDraft() {
   s.breakEnabled = $('break-enabled').checked; s.breakStartMinute = minute($('break-start').value); s.breakEndMinute = minute($('break-end').value);
   s.basis = document.querySelector('[name=basis]:checked')?.value || 'calendar';
   const fixed = readNumber($('fixed-days').value);
-  s.fixedDays = s.basis === 'calendar' && (!Number.isFinite(fixed) || fixed <= 0 || fixed > 31) ? 21.75 : fixed;
+  s.fixedDays = s.basis !== 'fixed' && (!Number.isFinite(fixed) || fixed <= 0 || fixed > 31) ? 21.75 : fixed;
   s.showFourDecimals = $('four-decimals').checked;
   for (const field of ['size', 'content', 'font', 'appearance']) d.floating[field] = $(`floating-${field}`).value;
   d.goal.enabled = $('goal-enabled').checked; d.goal.name = $('goal-name').value.trim();
@@ -202,16 +204,24 @@ function updateForm() {
   readDraft(); const s = draft.salary, d = draft.desktop;
   $('break-fields').hidden = !s.breakEnabled; $('overnight-note').hidden = !(s.endMinute < s.startMinute);
   $('fixed-days-row').hidden = s.basis !== 'fixed'; $('preview-denominator-row').hidden = s.basis !== 'fixed';
-  text('basis-explanation', s.basis === 'calendar' ? '月薪 ÷ 本月实际排班工时。临时安排也计入分母，完整排班月的预估收入等于月薪。' : '折算天数只影响时薪，不改变实际排班。分母使用常规班计薪时长；临时班次按实际时长累计，月累计可能与月薪不同。');
+  text('basis-explanation', s.basis === 'china' ? '月薪 ÷ 本月计薪时长。法定带薪节日按常规时段（含休息扣除）累计，调休休息日不重复计薪，完整月份累计等于月薪。这是收入展示分摊方式；法定日工资折算可选固定 21.75 天，不自动计算加班费。' : s.basis === 'calendar' ? '月薪 ÷ 本月实际排班工时。临时安排也计入分母，完整排班月的预估收入等于月薪。' : '折算天数只影响时薪，不改变实际排班。分母使用常规班计薪时长；临时班次按实际时长累计，月累计可能与月薪不同。');
+  const china = s.basis === 'china';
+  document.querySelectorAll('[data-day]').forEach(el => { el.disabled = china; });
+  text('weekday-note', china ? '使用全国双休及调休安排，工作日按钮暂不参与。企业特殊安排可在「临时排班」覆盖。' : '绿色为常规工作日。特殊日期在「临时排班」中单独修改。');
+  $('china-calendar-info').hidden = !china;
+  text('china-calendar-status', hasChinaCalendar(new Date()) ? `已载入 ${new Date().getFullYear()} 年日历 · 已核对，离线可用` : '本年日历尚未收录，请切换为实际排班或固定折算天数。');
+  text('china-calendar-years', `已收录 ${chinaCalendarYears.join('、')} 年。手动安排优先；带薪节日不发下班提醒。`);
   // Actual scheduled time is independent of salary and the chosen pay divisor.
-  const schedule = { ...clone(s), monthlySalary: 1, basis: 'calendar', fixedDays: 21.75 };
+  const schedule = { ...clone(s), monthlySalary: 1, basis: china ? 'china' : 'calendar', fixedDays: 21.75 };
   const now = new Date(), scheduleValid = !validateSalary(schedule), actual = snapshot(now, schedule);
   text('preview-schedule', scheduleValid ? `${actual.monthWorkdays} 天 · ${number(actual.monthScheduledSeconds / 3600)} 小时` : '填写完整的工作日与时段后计算');
+  $('preview-pay-calendar').hidden = !china;
+  text('preview-pay-calendar', actual.state === 'calendarUnavailable' ? '日历尚未收录，暂不计算收入' : `${actual.monthWorkdays} 个工作日 + ${actual.monthPaidHolidays} 个带薪节日 = ${actual.monthPayDays} 个计薪日`);
   const divisorSettings = { ...clone(s), monthlySalary: 1 };
   const divisorValid = !validateSalary(divisorSettings), divisor = snapshot(now, divisorSettings);
   const divisorHours = divisor.rateDenominatorSeconds / 3600;
   const salaryValid = !validateSalary(s), current = snapshot(now, s);
-  text('preview-hours-label', s.basis === 'calendar' ? '本月排班计薪工时' : '固定折算计薪工时');
+  text('preview-hours-label', china ? '本月计薪时长（含带薪节日）' : s.basis === 'calendar' ? '本月排班计薪工时' : '固定折算计薪工时');
   text('preview-pay-hours', divisorValid ? `${number(divisorHours)} 小时` : '填写后计算');
   text('preview-denominator', divisorValid ? `${number(s.fixedDays)} 天 × ${number(paidMinutes(s) / 60)} 小时 / 天` : '填写后计算');
   text('preview-salary', Number.isFinite(s.monthlySalary) && s.monthlySalary > 0 ? `¥ ${number(s.monthlySalary)}` : '填写后计算');
@@ -244,10 +254,11 @@ function readOverride() {
 function loadOverride() {
   const date = dateFromKey($('override-date').value); if (!date) return;
   const stored = draft.salary.dayOverrides[dayKey(date)], h = stored?.hours ?? hours(draft.salary);
-  const working = stored ? stored.isWorkingDay : draft.salary.weekdays.includes(date.getDay() + 1);
+  const working = stored ? stored.isWorkingDay : !!workHours(date, draft.salary);
   document.querySelectorAll('[name=override-working]').forEach((el) => { el.checked = (el.value === 'yes') === working; });
   for (const [id, value] of [['override-start', h.startMinute], ['override-end', h.endMinute], ['override-break-start', h.breakStartMinute], ['override-break-end', h.breakEndMinute]]) $(id).value = timeString(value);
   $('override-break-enabled').checked = h.breakEnabled; overrideBaseline = JSON.stringify(readOverride());
+  text('override-auto-info', isPaidHoliday(date, draft.salary) ? `当前自动安排：${chinaDay(date)?.name} · 带薪休假。加入休息覆盖后不再计薪。` : '手动安排保存后覆盖此日的自动规则。');
   text('override-message', ''); updateForm();
 }
 function overrideError(override, key) {
@@ -270,12 +281,12 @@ function renderOverrideList() {
     const override = draft.salary.dayOverrides[key], row = document.createElement('div'); row.className = 'override-row';
     const details = document.createElement('div'), title = document.createElement('strong'), desc = document.createElement('small');
     title.textContent = key; const h = override.hours;
-    desc.textContent = override.isWorkingDay ? `${timeString(h.startMinute)} — ${timeString(h.endMinute)}${h.endMinute < h.startMinute ? ' 次日' : ''}` : '当日休息';
+    desc.textContent = override.isWorkingDay ? `${timeString(h.startMinute)} — ${timeString(h.endMinute)}${h.endMinute < h.startMinute ? ' 次日' : ''}` : '休息（不计薪）';
     details.append(title, desc);
     const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = '编辑'; edit.addEventListener('click', () => { $('override-date').value = key; loadOverride(); });
-    const restore = document.createElement('button'); restore.type = 'button'; restore.textContent = '恢复常规'; restore.addEventListener('click', () => {
+    const restore = document.createElement('button'); restore.type = 'button'; restore.textContent = '恢复自动安排'; restore.addEventListener('click', () => {
       delete draft.salary.dayOverrides[key]; renderOverrideList(); if ($('override-date').value === key) loadOverride();
-      updateForm(); text('override-message', `${key} 已恢复常规，保存后生效。`);
+      updateForm(); text('override-message', `${key} 已恢复自动安排，保存后生效。`);
     }); row.append(details, edit, restore); list.append(row);
   }
 }

@@ -108,17 +108,26 @@ struct SettingsView: View {
                                 .foregroundColor(draft.weekdays.contains(day) ? .white : Theme.muted)
                                 .background(draft.weekdays.contains(day) ? Theme.green : Color.white)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(.plain).accessibilityLabel("周\(weekday(day))，\(draft.weekdays.contains(day) ? "已选" : "未选")")
+                        }.buttonStyle(.plain).disabled(draft.basis == .china).accessibilityLabel("周\(weekday(day))，\(draft.weekdays.contains(day) ? "已选" : "未选")")
                     }
                 }
-                note("绿色为常规工作日。个别日期可在「临时排班」中改为上班或休息。")
+                note(draft.basis == .china ? "使用全国双休及调休安排，工作日按钮暂不参与。企业特殊安排可在「临时排班」覆盖。" : "绿色为常规工作日。个别日期可在「临时排班」中改为上班或休息。")
             }
             VStack(alignment: .leading, spacing: 12) {
                 title("03", "计薪口径")
                 Picker("计薪口径", selection: $draft.basis) {
+                    Text("中国大陆计薪日历").tag(PayBasis.china)
                     Text("按本月实际排班").tag(PayBasis.calendar)
                     Text("固定折算天数").tag(PayBasis.fixed)
                 }.pickerStyle(.segmented).labelsHidden()
+                if draft.basis == .china {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(ChinaCalendar.status(at: model.now)).fontWeight(.medium)
+                        Text("已收录 \(ChinaCalendar.years.map(String.init).joined(separator: "、")) 年。手动安排优先；带薪节日不发下班提醒。")
+                        Link("数据来源：Timor ↗", destination: URL(string: "https://timor.tech/api/holiday/")!)
+                    }.font(.system(size: 11)).foregroundColor(Theme.green).padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading).background(Theme.green.opacity(0.06)).cornerRadius(10)
+                }
                 if draft.basis == .fixed {
                     HStack {
                         Text("每月折算天数").font(.system(size: 12))
@@ -129,10 +138,14 @@ struct SettingsView: View {
                 }
                 VStack(spacing: 12) {
                     infoRow("本月实际排班", "\(previewSnapshot.monthWorkdays) 天 · \(AppModel.number(previewSnapshot.monthScheduledSeconds / 3600, digits: 1)) 小时")
+                    if draft.basis == .china {
+                        infoRow("本月计薪日", "\(previewSnapshot.monthWorkdays) 工作日 + \(previewSnapshot.monthPaidHolidays) 带薪节日 = \(previewSnapshot.monthPayDays) 天")
+                        infoRow("计薪时长（含带薪节日）", "\(AppModel.number(previewSnapshot.monthPaidSeconds / 3600, digits: 1)) 小时")
+                    }
                     if draft.basis == .fixed { infoRow("时薪折算分母", "\(fixedDaysText) 天 × \(AppModel.number(Double(draft.paidMinutes) / 60, digits: 2)) 小时 / 天") }
                     infoRow("折合时薪", parsedDraft.validationError == nil ? "¥ \(AppModel.number(previewSnapshot.hourlyRate)) / 小时" : "填写后计算")
                 }.padding(14).background(Theme.green.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 10))
-                note(draft.basis == .calendar
+                note(draft.basis == .china ? "按本月计薪时长分摊月薪，完整月份累计等于月薪。法定带薪节日沿用常规时段与休息扣除，这只是收入展示时段，不要求当天上班。不自动计算加班费；固定 21.75 天折算仍可单独选择。" : draft.basis == .calendar
                      ? "月薪 ÷ 本月实际排班工时。临时排班也计入分母，完整排班月的预估收入等于月薪。"
                      : "折算天数只影响时薪，不会改变实际排班天数。固定口径使用常规班计薪时长，临时班次按其实际时长计薪，月累计可能与月薪不同。")
             }
@@ -244,10 +257,13 @@ struct SettingsView: View {
                     .datePickerStyle(.field).environment(\.locale, Locale(identifier: "zh_CN")).accessibilityLabel("排班日期")
                     .onChange(of: overrideDate) { _ in loadOverride() }
                 Picker("当日安排", selection: $overrideWorking) {
-                    Text("当日上班").tag(true); Text("当日休息").tag(false)
+                    Text("当日上班").tag(true); Text("休息（不计薪）").tag(false)
                 }.pickerStyle(.segmented).labelsHidden()
                 if overrideWorking { WorkHoursEditor(hours: $overrideHours) }
-                note("仅覆盖所选日期开始的班次。跨夜班按上班日期归属；例如把周六设为休息，不会截断周五晚班。暂不自动导入法定节假日与调休。")
+                note("仅覆盖所选日期开始的班次，跨夜班按开始日期归属。手动安排优先于自动日历；休息覆盖表示不计薪。")
+                if draft.isPaidHoliday(on: overrideDate) {
+                    note("当前自动安排：\(ChinaCalendar.day(overrideDate)?.name ?? "法定节日") · 带薪休假。加入休息覆盖后不再计薪。")
+                }
                 Button("加入临时排班") { addOverride() }.buttonStyle(SoftButton(primary: true))
                 if !overrideMessage.isEmpty { Text(overrideMessage).font(.system(size: 11)).foregroundColor(Theme.green).fixedSize(horizontal: false, vertical: true) }
             }
@@ -261,11 +277,11 @@ struct SettingsView: View {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(key).font(.system(size: 12, weight: .semibold)).monospacedDigit()
-                                Text(value.isWorkingDay ? value.hours.label : "当日休息").font(.system(size: 11)).foregroundColor(Theme.muted)
+                                Text(value.isWorkingDay ? value.hours.label : "休息（不计薪）").font(.system(size: 11)).foregroundColor(Theme.muted)
                             }
                             Spacer()
                             Button("编辑") { if let date = LocalDay.date(for: key) { overrideDate = date; loadOverride() } }.buttonStyle(.borderless)
-                            Button("恢复常规") {
+                            Button("恢复自动安排") {
                                 draft.dayOverrides.removeValue(forKey: key)
                                 if key == LocalDay.key(for: overrideDate) { loadOverride() }
                                 overrideMessage = "\(key) 已恢复常规排班，保存后生效。"
@@ -285,15 +301,19 @@ struct SettingsView: View {
         var s = draft
         s.monthlySalary = Double(salaryText.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "，", with: "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         let fixed = Double(fixedDaysText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-        s.fixedDays = s.basis == .calendar && (!fixed.isFinite || fixed <= 0 || fixed > 31) ? 21.75 : fixed
+        s.fixedDays = s.basis != .fixed && (!fixed.isFinite || fixed <= 0 || fixed > 31) ? 21.75 : fixed
         return s
     }
-    private var previewSnapshot: EarningsSnapshot { SalaryEngine().snapshot(at: model.now, settings: parsedDraft) }
+    private var previewSnapshot: EarningsSnapshot {
+        var s = parsedDraft
+        if !s.monthlySalary.isFinite || s.monthlySalary <= 0 || s.monthlySalary > 100_000_000 { s.monthlySalary = 1 }
+        return SalaryEngine().snapshot(at: model.now, settings: s)
+    }
     private func loadOverride() {
         if let value = draft.dayOverrides[LocalDay.key(for: overrideDate)] {
             overrideWorking = value.isWorkingDay; overrideHours = value.hours
         } else {
-            overrideWorking = draft.weekdays.contains(Calendar.current.component(.weekday, from: overrideDate))
+            overrideWorking = draft.workHours(on: overrideDate) != nil
             overrideHours = draft.hours
         }
         overrideBaseline = DayOverride(isWorkingDay: overrideWorking, hours: overrideHours)

@@ -33,6 +33,72 @@ final class SalaryEngineTests {
         s.monthlySalary = 18_400
         return s
     }
+    func testChinaMonthlyCountsAndConservation() {
+        var s = settings(); s.basis = .china; s.weekdays = []
+        let expected = [
+            2025: ([19,19,21,22,19,20,23,21,23,18,20,23], [24,19,21,23,22,20,23,21,23,22,20,23]),
+            2026: ([21,16,22,21,19,21,23,21,22,18,21,23], [22,20,22,22,21,22,23,21,23,21,21,23])
+        ]
+        for (year, counts) in expected {
+            var holidays = 0
+            for month in 1...12 {
+                let first = calendar.date(from: DateComponents(year: year, month: month, day: 1))!
+                let end = calendar.date(byAdding: .month, value: 1, to: first)!.addingTimeInterval(-1)
+                let current = SalaryEngine(calendar: calendar).snapshot(at: end, settings: s)
+                checkEqual(current.monthWorkdays, counts.0[month - 1])
+                checkEqual(current.monthPayDays, counts.1[month - 1])
+                checkEqual(current.monthScheduledSeconds, Double(counts.0[month - 1] * 8 * 3600))
+                checkEqual(current.monthPaidSeconds, Double(counts.1[month - 1] * 8 * 3600))
+                checkEqual(current.monthEarned, s.monthlySalary, accuracy: 0.00001)
+                holidays += current.monthPaidHolidays
+            }
+            checkEqual(holidays, 13)
+        }
+    }
+    func testChinaPaidHolidaysMakeupAndCorrections() {
+        var s = settings(); s.basis = .china; s.monthlySalary = 16_800
+        let holiday = snapshot("2026-10-01 15:00:00", s)
+        checkEqual(holiday.state, .paidHoliday)
+        checkEqual(holiday.todayEarned, 500, accuracy: 0.00001)
+        checkEqual(holiday.hourlyRate, 100, accuracy: 0.00001)
+        checkEqual(snapshot("2026-10-01 12:30:00", s).state, .onBreak)
+        checkEqual(snapshot("2026-10-04 15:00:00", s).todayEarned, 0)
+        checkEqual(snapshot("2026-10-10 15:00:00", s).state, .working)
+        checkNil(s.workHours(on: date("2026-10-01 15:00:00"), calendar: calendar))
+        checkEqual(ChinaCalendar.day(date("2025-01-28 15:00:00"), calendar: calendar)?.kind, "statutory")
+        checkEqual(ChinaCalendar.day(date("2025-10-06 15:00:00"), calendar: calendar)?.kind, "statutory")
+        checkEqual(ChinaCalendar.day(date("2025-05-03 15:00:00"), calendar: calendar)?.kind, "rest")
+        s.monthlySalary *= 2
+        checkEqual(snapshot("2026-10-01 15:00:00", s).todayEarned, 1000, accuracy: 0.00001)
+    }
+    func testChinaOverridesRemindersAndUnknownYear() throws {
+        var s = settings(); s.basis = .china; s.monthlySalary = 16_800
+        var short = s.hours; short.startMinute = 600; short.endMinute = 840; short.breakEnabled = false
+        s.dayOverrides["2026-10-01"] = DayOverride(isWorkingDay: true, hours: short)
+        var current = snapshot("2026-10-01 14:00:00", s)
+        checkEqual(current.monthWorkdays, 19); checkEqual(current.monthPaidHolidays, 2)
+        checkEqual(current.monthPaidSeconds, 164 * 3600); checkEqual(current.earnedSeconds, 4 * 3600)
+        s.dayOverrides["2026-10-01"] = DayOverride(isWorkingDay: false)
+        current = snapshot("2026-10-01 14:00:00", s)
+        checkEqual(current.todayEarned, 0); checkEqual(current.monthPayDays, 20)
+        s.dayOverrides.removeValue(forKey: "2026-10-01")
+        var reminders = ReminderPreferences(); reminders.offWorkEnabled = true
+        let plans = ReminderPlanner(calendar: calendar).reminders(after: date("2026-10-01 10:00:00"), settings: s, preferences: reminders)
+        checkEqual(plans.first?.id, "paypulse.offWork.2026-10-08")
+        checkEqual(plans.contains { $0.id == "paypulse.offWork.2026-10-10" }, true)
+        checkEqual(snapshot("2027-01-01 10:00:00", s).state, .calendarUnavailable)
+        checkEqual(snapshot("2027-01-01 10:00:00", s).monthEarned, 0)
+        let restored = try JSONDecoder().decode(SalarySettings.self, from: JSONEncoder().encode(s))
+        checkEqual(restored, s)
+    }
+    func testChinaOvernightAndOverlap() {
+        var s = settings(); s.basis = .china; s.startMinute = 1320; s.endMinute = 360; s.breakEnabled = false
+        checkEqual(snapshot("2026-10-02 01:00:00", s).state, .paidHoliday)
+        checkEqual(snapshot("2026-10-31 23:59:59", s).monthEarned, s.monthlySalary, accuracy: 0.00001)
+        var early = s.hours; early.startMinute = 300; early.endMinute = 720
+        s.dayOverrides["2026-10-02"] = DayOverride(isWorkingDay: true, hours: early)
+        checkNotNil(s.validationError)
+    }
     func snapshot(_ time: String, _ s: SalarySettings? = nil) -> EarningsSnapshot {
         SalaryEngine(calendar: calendar).snapshot(at: date(time), settings: s ?? settings())
     }
@@ -272,6 +338,10 @@ enum SalaryEngineChecks {
     static func main() throws {
         let checks = SalaryEngineTests()
         let cases: [(String, () throws -> Void)] = [
+            ("China monthly work, holiday and pay counts for two years", checks.testChinaMonthlyCountsAndConservation),
+            ("China paid leave, makeup and reviewed API corrections", checks.testChinaPaidHolidaysMakeupAndCorrections),
+            ("China overrides, reminders, unknown years and persistence", checks.testChinaOverridesRemindersAndUnknownYear),
+            ("China overnight paid leave and overlap rejection", checks.testChinaOvernightAndOverlap),
             ("workday and lunch boundaries", checks.testWorkdayAndLunchBoundaries),
             ("weekend and midnight reset", checks.testWeekendAndDayReset),
             ("monthly conservation and reset", checks.testMonthlyConservationAndMonthReset),

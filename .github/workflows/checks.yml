@@ -29,6 +29,7 @@ jobs:
           node-version: '22'
       - name: Check JavaScript and calendar calculations
         run: |
+          node scripts/update-china-calendar.mjs --check
           node --check web/public/app.mjs
           npm test --prefix web
       - name: Build the static website

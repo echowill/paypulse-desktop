@@ -123,7 +123,11 @@ struct DashboardView: View {
                 }.font(.system(size: 12))
                 Text("本月实际排班 \(model.snapshot.monthWorkdays) 天 · \(AppModel.number(model.snapshot.monthScheduledSeconds / 3600, digits: 1)) 小时")
                     .font(.system(size: 9)).foregroundColor(Theme.muted).frame(maxWidth: .infinity, alignment: .leading)
-                Text(model.settings.basis == .calendar ? "时薪按本月实际排班工时折算" : "时薪折算：\(AppModel.number(model.settings.fixedDays)) 天/月 × 常规班计薪时长")
+                if model.settings.basis == .china {
+                    Text("\(model.snapshot.monthWorkdays) 工作日 + \(model.snapshot.monthPaidHolidays) 带薪节日 = \(model.snapshot.monthPayDays) 计薪日")
+                        .font(.system(size: 10, weight: .medium)).foregroundColor(Theme.green).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Text(model.settings.basis == .china ? "中国大陆计薪日历 · 按当月计薪时长分摊月薪" : model.settings.basis == .calendar ? "时薪按本月实际排班工时折算" : "时薪折算：\(AppModel.number(model.settings.fixedDays)) 天/月 × 常规班计薪时长")
                     .font(.system(size: 9)).foregroundColor(Theme.muted).frame(maxWidth: .infinity, alignment: .leading)
                 if model.desktop.reminders.paydayEnabled {
                     HStack {
@@ -154,8 +158,10 @@ struct DashboardView: View {
     }
     private var stateMessage: String {
         switch model.snapshot.state {
+        case .paidHoliday: return "法定带薪节日，收入按常规时段累计，安心休假"
+        case .calendarUnavailable: return "本年日历尚未收录，请在设置中切换计薪口径"
         case .onBreak: return "休息也很重要，结束后自动继续计薪"
-        case .waiting: return "上班时间一到，金额就会自动增长"
+        case .waiting: return model.snapshot.nextEventLabel == "带薪计时开始" ? "今天是法定带薪节日，常规时段内会自动累计收入" : "上班时间一到，金额就会自动增长"
         case .finished: return "今天的努力已经记下，接下来是你的时间"
         case .dayOff: return "今天没有排班，把时间留给生活"
         default: return "设置你的月薪，让每一秒都看得见"
